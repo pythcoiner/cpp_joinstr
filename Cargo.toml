@@ -1,0 +1,16 @@
+[package]
+name = "qt_joinstr"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+joinstr = {git = "https://github.com/pythcoiner/joinstr.git", rev = "04f64ec"}
+cxx = "1.0.143"
+cxx-qt = "0.7.1"
+cxx-qt-lib = { version = "0.7.1", features = ["link_qt_object_files", "qt_gui", "serde"] }
+
+[build-dependencies]
+cxx-qt-build = { version = "0.7.1", features = ["link_qt_object_files"] }
