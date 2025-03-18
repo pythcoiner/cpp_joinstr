@@ -1,247 +1,207 @@
-use joinstr::{
-    bip39::Mnemonic,
-    interface::{self},
-    miniscript::bitcoin::{self, Address, Amount, OutPoint, ScriptBuf, Sequence, TxOut, Txid},
-    signer::CoinPath,
-};
-use qt_joinstr::{Coin, CoinJoinResult, QString, QUrl};
-use std::str::FromStr;
+pub mod address;
+pub mod coin;
+pub mod macros;
+pub mod mnemonic;
+pub mod peer_config;
+pub mod pool;
+pub mod pool_config;
+
+pub use address::{address_from_string, Address};
+pub use coin::Coin;
+use joinstr::{bip39, interface};
+pub use mnemonic::{mnemonic_from_string, Mnemonic};
+pub use pool::Pool;
 
 #[cxx_qt::bridge]
 pub mod qt_joinstr {
 
-    unsafe extern "C++" {
-        include!("cxx-qt-lib/qstring.h");
-        type QString = cxx_qt_lib::QString;
+    pub enum Network {
+        Regtest,
+        Signet,
+        Testnet,
+        Bitcoin,
+    }
 
-        include!("cxx-qt-lib/qurl.h");
-        type QUrl = cxx_qt_lib::QUrl;
+    extern "Rust" {
+        type Coin;
+        fn amount_sat(&self) -> u64;
+        fn amount_btc(&self) -> f64;
+        fn outpoint(&self) -> String;
+    }
+
+    extern "Rust" {
+        type Mnemonic;
+        fn is_ok(&self) -> bool;
+        fn is_err(&self) -> bool;
+        fn error(&self) -> String;
+        fn mnemonic_from_string(value: String) -> Box<Mnemonic>;
+    }
+
+    extern "Rust" {
+        type Address;
+        fn is_ok(&self) -> bool;
+        fn is_err(&self) -> bool;
+        fn error(&self) -> String;
+        fn address_from_string(value: String) -> Box<Address>;
+    }
+
+    extern "Rust" {
+        type Coins;
+        fn is_ok(&self) -> bool;
+        fn is_err(&self) -> bool;
+        fn error(&self) -> String;
+        fn count(&self) -> usize;
+        fn is_empty(&self) -> bool;
+        fn get(&self, index: usize) -> Box<Coin>;
+    }
+
+    extern "Rust" {
+        type Txid;
+        fn is_ok(&self) -> bool;
+        fn is_err(&self) -> bool;
+        fn error(&self) -> String;
+        fn value(&self) -> String;
+    }
+
+    extern "Rust" {
+        type Pool;
+        fn denomination_sat(&self) -> u64;
+        fn denomination_btc(&self) -> f64;
+        fn peers(&self) -> usize;
+        fn relay(&self) -> String;
+        fn fee(&self) -> u32;
+    }
+
+    pub struct PeerConfig {
+        pub mnemonics: Box<Mnemonic>,
+        pub electrum_url: String,
+        pub electrum_port: u16,
+        pub input: Box<Coin>,
+        pub output: Box<Address>,
+        pub relay: String,
+    }
+
+    pub struct PoolConfig {
+        pub denomination: f64,
+        pub fee: u32,
+        pub max_duration: u64,
+        pub peers: usize,
+        pub network: Box<Network>,
     }
 
     extern "Rust" {
 
         fn list_coins(
-            mnemonics: QString,
-            electrum_address: QUrl,
-            start_index: u32,
-            stop_index: u32,
-            network: Network,
-        ) -> ListCoinsResult;
+            mnemonics: Box<Mnemonic>,
+            electrum_url: String,
+            electrum_port: u16,
+            range_start: u32,
+            range_end: u32,
+            network: Box<Network>,
+        ) -> Box<Coins>;
 
-        #[allow(clippy::too_many_arguments)]
-        fn initiate_coinjoin(
-            // Pool
-            denomination: f64,
-            fee: u32,
-            max_duration: u64,
-            peers: u8,
-            network: Network,
-            // Peer
-            mnemonics: QString,
-            electrum_address: QUrl,
-            input: Coin,
-            output: QString,
-            relay: QString,
-        ) -> CoinJoinResult;
-    }
+        fn initiate_coinjoin(config: PoolConfig, peer: PeerConfig) -> Box<Txid>;
 
-    struct Coin {
-        pub txout_amount: u64,
-        txout_script_pubkey: Vec<u8>,
-        pub outpoint: QString,
-        sequence: u32,
-        coinpath_depth: u32,
-        coinpath_index: u32,
-    }
+        fn join_coinjoin(pool: Box<Pool>, peer: PeerConfig) -> Box<Txid>;
 
-    struct CoinJoinResult {
-        pub txid: QString,
-        pub error: QString,
-    }
-
-    struct ListCoinsResult {
-        pub coins: Vec<Coin>,
-        pub error: QString,
-    }
-
-    enum Network {
-        /// Mainnet Bitcoin.
-        Bitcoin,
-        /// Bitcoin's testnet network.
-        Testnet,
-        /// Bitcoin's signet network.
-        Signet,
-        /// Bitcoin's regtest network.
-        Regtest,
     }
 }
 
-impl CoinJoinResult {
-    pub fn error(msg: &str) -> Self {
-        CoinJoinResult {
-            txid: String::new().into(),
-            error: msg.to_string().into(),
-        }
-    }
+use qt_joinstr::{Network, PeerConfig, PoolConfig};
 
-    pub fn ok(txid: Txid) -> Self {
-        CoinJoinResult {
-            txid: txid.to_string().into(),
-            error: String::new().into(),
-        }
+impl Network {
+    pub fn boxed(&self) -> Box<Network> {
+        Box::new(*self)
     }
 }
 
-impl From<joinstr::signer::Coin> for qt_joinstr::Coin {
-    fn from(value: joinstr::signer::Coin) -> Self {
-        qt_joinstr::Coin {
-            txout_amount: value.txout.value.to_sat(),
-            txout_script_pubkey: value.txout.script_pubkey.into_bytes(),
-            outpoint: value.outpoint.to_string().into(),
-            sequence: value.sequence.to_consensus_u32(),
-            coinpath_depth: value.coin_path.depth,
-            coinpath_index: value.coin_path.index.unwrap(),
-        }
+result!(Coins, Vec<Box<Coin>>);
+
+impl Coins {
+    pub fn count(&self) -> usize {
+        self.inner.as_ref().map(|v| v.len()).unwrap_or(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count() != 0
+    }
+
+    pub fn get(&self, index: usize) -> Box<Coin> {
+        self.inner.as_ref().unwrap().get(index).unwrap().clone()
     }
 }
 
-impl From<qt_joinstr::Coin> for joinstr::signer::Coin {
-    fn from(value: qt_joinstr::Coin) -> Self {
-        joinstr::signer::Coin {
-            txout: TxOut {
-                value: Amount::from_sat(value.txout_amount),
-                script_pubkey: ScriptBuf::from_bytes(value.txout_script_pubkey),
-            },
-            outpoint: OutPoint::from_str(&value.outpoint.to_string()).unwrap(),
-            sequence: Sequence::from_consensus(value.sequence),
-            coin_path: CoinPath {
-                depth: value.coinpath_depth,
-                index: Some(value.coinpath_index),
-            },
-        }
+result!(Pools, Vec<Box<Pool>>);
+
+impl Pools {
+    pub fn count(&self) -> usize {
+        self.inner.as_ref().map(|v| v.len()).unwrap_or(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count() != 0
+    }
+
+    pub fn get(&self, index: usize) -> Box<Pool> {
+        self.inner.as_ref().unwrap().get(index).unwrap().clone()
     }
 }
 
-impl From<qt_joinstr::Network> for bitcoin::Network {
-    fn from(value: qt_joinstr::Network) -> Self {
-        match value {
-            qt_joinstr::Network::Bitcoin => Self::Bitcoin,
-            qt_joinstr::Network::Testnet => Self::Testnet,
-            qt_joinstr::Network::Signet => Self::Signet,
-            qt_joinstr::Network::Regtest => Self::Regtest,
-            _ => unreachable!(),
-        }
-    }
-}
+pub fn list_coins(
+    #[allow(clippy::boxed_local)] mnemonics: Box<Mnemonic>,
+    electrum_url: String,
+    electrum_port: u16,
+    range_start: u32,
+    range_end: u32,
+    #[allow(clippy::boxed_local)] network: Box<Network>,
+) -> Box<Coins> {
+    let range = (range_start, range_end);
+    let mut res = Coins::new();
 
-impl From<bitcoin::Network> for qt_joinstr::Network {
-    fn from(value: bitcoin::Network) -> Self {
-        match value {
-            bitcoin::Network::Bitcoin => Self::Bitcoin,
-            bitcoin::Network::Testnet => Self::Testnet,
-            bitcoin::Network::Signet => Self::Signet,
-            bitcoin::Network::Regtest => Self::Regtest,
-            _ => unreachable!(),
-        }
-    }
-}
+    let mnemonics: bip39::Mnemonic = (*mnemonics).into();
+    let mnemonics = mnemonics.to_string();
 
-fn list_coins(
-    mnemonics: QString,
-    electrum_address: QUrl,
-    start_index: u32,
-    stop_index: u32,
-    network: qt_joinstr::Network,
-) -> qt_joinstr::ListCoinsResult {
-    let electrum_port = electrum_address.port_or(-1);
-    if electrum_port == -1 {
-        return qt_joinstr::ListCoinsResult {
-            coins: Vec::new(),
-            error: "electrum_address.port must be specified!"
-                .to_string()
-                .into(),
-        };
-    }
-
-    let res = interface::list_coins(
-        mnemonics.to_string(),
-        electrum_address.to_string(),
-        electrum_port as u16,
-        (start_index, stop_index),
-        network.into(),
-    );
-
-    let mut result = qt_joinstr::ListCoinsResult {
-        coins: Vec::new(),
-        error: String::new().into(),
-    };
-
-    match res {
-        Ok(r) => {
-            for c in r {
-                result.coins.push(c.into());
-            }
-        }
-        Err(e) => result.error = format!("{:?}", e).into(),
-    }
-
-    result
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn initiate_coinjoin(
-    // Pool
-    denomination: f64,
-    fee: u32,
-    max_duration: u64,
-    peers: u8,
-    network: qt_joinstr::Network,
-    // Peer
-    mnemonics: QString,
-    electrum_address: QUrl,
-    input: Coin,
-    output: QString,
-    relay: QString,
-) -> CoinJoinResult {
-    let electrum_port = electrum_address.port_or(-1);
-    if electrum_port == -1 {
-        return CoinJoinResult::error("electrum_address.port must be specified!");
-    }
-    let electrum_address = electrum_address.to_string();
-    let electrum_port = electrum_port as u16;
-
-    let pool = joinstr::interface::PoolConfig {
-        denomination,
-        fee,
-        max_duration,
-        peers: peers.into(),
-        network: bitcoin::Network::from(network),
-    };
-
-    let mnemonics = match Mnemonic::from_str(&mnemonics.to_string()) {
-        Ok(m) => m,
-        Err(e) => {
-            return CoinJoinResult::error(&format!("Invalid mnemonic: {e}"));
-        }
-    };
-
-    let input = joinstr::signer::Coin::from(input);
-    let output = match Address::from_str(&output.to_string()) {
-        Ok(a) => a,
-        Err(e) => return CoinJoinResult::error(&format!("Wrong address: {e}")),
-    };
-
-    let peer = joinstr::interface::PeerConfig {
+    match interface::list_coins(
         mnemonics,
-        electrum_address,
+        electrum_url,
         electrum_port,
-        input,
-        output,
-        relay: relay.into(),
-    };
-
-    match interface::initiate_coinjoin(pool, peer) {
-        Ok(txid) => CoinJoinResult::ok(txid),
-        Err(e) => CoinJoinResult::error(&format!("{e:?}")),
+        range,
+        (*network).into(),
+    ) {
+        Ok(r) => {
+            let coins = r.into_iter().map(|c| Box::new(c.into())).collect();
+            res.set(coins);
+        }
+        Err(e) => res.set_error(e.to_string()),
     }
+
+    Box::new(res)
+}
+
+result!(Txid, String);
+
+impl Txid {
+    pub fn value(&self) -> String {
+        self.unwrap()
+    }
+}
+
+pub fn initiate_coinjoin(config: PoolConfig, peer: PeerConfig) -> Box<Txid> {
+    let mut res = Txid::new();
+    match interface::initiate_coinjoin(config.into(), peer.into()) {
+        Ok(txid) => res.set(txid.to_string()),
+        Err(e) => res.set_error(format!("{e}")),
+    }
+
+    Box::new(res)
+}
+
+pub fn join_coinjoin(pool: Box<Pool>, peer: PeerConfig) -> Box<Txid> {
+    let mut res = Txid::new();
+    match interface::join_coinjoin((*pool).into(), peer.into()) {
+        Ok(txid) => res.set(txid.to_string()),
+        Err(e) => res.set_error(format!("{e}")),
+    }
+
+    Box::new(res)
 }
