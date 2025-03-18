@@ -56,6 +56,16 @@ pub mod qt_joinstr {
     }
 
     extern "Rust" {
+        type Pools;
+        fn is_ok(&self) -> bool;
+        fn is_err(&self) -> bool;
+        fn error(&self) -> String;
+        fn count(&self) -> usize;
+        fn is_empty(&self) -> bool;
+        fn get(&self, index: usize) -> Box<Pool>;
+    }
+
+    extern "Rust" {
         type Txid;
         fn is_ok(&self) -> bool;
         fn is_err(&self) -> bool;
@@ -99,6 +109,8 @@ pub mod qt_joinstr {
             range_end: u32,
             network: Box<Network>,
         ) -> Box<Coins>;
+
+        fn list_pools(back: u64, timeout: u64, relay: String) -> Box<Pools>;
 
         fn initiate_coinjoin(config: PoolConfig, peer: PeerConfig) -> Box<Txid>;
 
@@ -173,6 +185,20 @@ pub fn list_coins(
             res.set(coins);
         }
         Err(e) => res.set_error(e.to_string()),
+    }
+
+    Box::new(res)
+}
+
+pub fn list_pools(back: u64, timeout: u64, relay: String) -> Box<Pools> {
+    let mut res = Pools::new();
+
+    match interface::list_pools(back, timeout, relay) {
+        Ok(pools) => {
+            let pools = pools.into_iter().map(|p| Box::new(p.into())).collect();
+            res.set(pools);
+        }
+        Err(e) => res.set_error(format!("{e}")),
     }
 
     Box::new(res)
