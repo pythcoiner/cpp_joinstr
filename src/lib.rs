@@ -13,7 +13,7 @@ pub use mnemonic::{mnemonic_from_string, Mnemonic};
 pub use pool::Pool;
 
 #[cxx::bridge]
-pub mod qt_joinstr {
+pub mod cpp_joinstr {
 
     pub enum Network {
         Regtest,
@@ -119,7 +119,7 @@ pub mod qt_joinstr {
     }
 }
 
-use qt_joinstr::{Network, PeerConfig, PoolConfig};
+use cpp_joinstr::{Network, PeerConfig, PoolConfig};
 
 impl Network {
     pub fn boxed(&self) -> Box<Network> {

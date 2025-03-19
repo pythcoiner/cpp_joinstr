@@ -1,6 +1,6 @@
 use joinstr::interface;
 
-use crate::qt_joinstr::PeerConfig;
+use crate::cpp_joinstr::PeerConfig;
 
 impl From<PeerConfig> for interface::PeerConfig {
     fn from(value: PeerConfig) -> Self {

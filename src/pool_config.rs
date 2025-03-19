@@ -1,4 +1,4 @@
-use crate::qt_joinstr::{Network, PoolConfig};
+use crate::cpp_joinstr::{Network, PoolConfig};
 use joinstr::{interface, miniscript::bitcoin};
 
 impl From<PoolConfig> for interface::PoolConfig {

@@ -3,7 +3,7 @@ use std::fs;
 fn main() {
     cxx_build::bridge("src/lib.rs")
         .flag_if_supported("-std=c++17")
-        .compile("qt_joinstr"); // output static lib: libqt_joinstr.a
+        .compile("cpp_joinstr");
 
     // Manually list all .rs files under src/
     for entry in fs::read_dir("src").unwrap() {
