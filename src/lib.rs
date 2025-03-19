@@ -12,7 +12,7 @@ use joinstr::{bip39, interface};
 pub use mnemonic::{mnemonic_from_string, Mnemonic};
 pub use pool::Pool;
 
-#[cxx_qt::bridge]
+#[cxx::bridge]
 pub mod qt_joinstr {
 
     pub enum Network {

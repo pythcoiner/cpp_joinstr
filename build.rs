@@ -1,11 +1,9 @@
 use std::fs;
 
-use cxx_qt_build::CxxQtBuilder;
-
 fn main() {
-    CxxQtBuilder::new()
-        .file("src/lib.rs")
-        .build();
+    cxx_build::bridge("src/lib.rs")
+        .flag_if_supported("-std=c++17")
+        .compile("qt_joinstr"); // output static lib: libqt_joinstr.a
 
     // Manually list all .rs files under src/
     for entry in fs::read_dir("src").unwrap() {
