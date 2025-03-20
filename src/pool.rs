@@ -7,34 +7,21 @@ pub struct Pool {
 
 impl Pool {
     pub fn denomination_sat(&self) -> u64 {
-        self.inner
-            .payload
-            .as_ref()
-            .clone()
-            .unwrap()
-            .denomination
-            .to_sat()
+        self.inner.payload.as_ref().unwrap().denomination.to_sat()
     }
 
     pub fn denomination_btc(&self) -> f64 {
-        self.inner
-            .payload
-            .as_ref()
-            .clone()
-            .unwrap()
-            .denomination
-            .to_btc()
+        self.inner.payload.as_ref().unwrap().denomination.to_btc()
     }
 
     pub fn peers(&self) -> usize {
-        self.inner.payload.as_ref().clone().unwrap().peers
+        self.inner.payload.as_ref().unwrap().peers
     }
 
     pub fn relay(&self) -> String {
         self.inner
             .payload
             .as_ref()
-            .clone()
             .unwrap()
             .relays
             .first()

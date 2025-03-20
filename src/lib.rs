@@ -1,19 +1,29 @@
 pub mod address;
 pub mod coin;
+pub mod coin_store;
 pub mod macros;
 pub mod mnemonic;
 pub mod peer_config;
 pub mod pool;
 pub mod pool_config;
+pub mod wallet;
 
 pub use address::{address_from_string, Address};
 pub use coin::Coin;
 use joinstr::{bip39, interface};
 pub use mnemonic::{mnemonic_from_string, Mnemonic};
 pub use pool::Pool;
+use wallet::{new_wallet, Poll, Signal, Wallet};
 
 #[cxx::bridge]
 pub mod cpp_joinstr {
+
+    #[derive(Debug, Clone)]
+    pub enum SignalFlag {
+        UpdateCoins,
+        UpdateWallet,
+        Error,
+    }
 
     pub enum Network {
         Regtest,
@@ -22,11 +32,33 @@ pub mod cpp_joinstr {
         Bitcoin,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub enum CoinStatus {
+        Unconfirmed,
+        Confirmed,
+        BeingSpend,
+        Spend,
+    }
+
     extern "Rust" {
         type Coin;
         fn amount_sat(&self) -> u64;
         fn amount_btc(&self) -> f64;
         fn outpoint(&self) -> String;
+    }
+
+    extern "Rust" {
+        type Poll;
+        fn is_ok(&self) -> bool;
+        fn is_err(&self) -> bool;
+        fn error(&self) -> String;
+    }
+
+    extern "Rust" {
+        type Signal;
+        fn is_ok(&self) -> bool;
+        fn is_err(&self) -> bool;
+        fn error(&self) -> String;
     }
 
     extern "Rust" {
@@ -80,6 +112,18 @@ pub mod cpp_joinstr {
         fn peers(&self) -> usize;
         fn relay(&self) -> String;
         fn fee(&self) -> u32;
+    }
+
+    extern "Rust" {
+        type Wallet;
+        fn spendable_coins(&self) -> Box<Coins>;
+
+        fn new_wallet(
+            mnemonic: Box<Mnemonic>,
+            network: Network,
+            addr: String,
+            port: u16,
+        ) -> Box<Wallet>;
     }
 
     pub struct PeerConfig {

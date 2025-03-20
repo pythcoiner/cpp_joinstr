@@ -9,6 +9,8 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 [dependencies]
 joinstr = {git = "https://github.com/pythcoiner/joinstr.git", rev = "028985b"}
 cxx = "1.0.143"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
 
 [build-dependencies]
 cxx-build = "1.0.149"
