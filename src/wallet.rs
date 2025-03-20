@@ -77,6 +77,20 @@ impl Wallet {
         }
         Box::new(poll)
     }
+
+    pub fn recv_addr_at(&self, index: u32) -> String {
+        self.signer
+            .recv_addr_at(index)
+            .expect("valid path")
+            .to_string()
+    }
+
+    pub fn change_addr_at(&self, index: u32) -> String {
+        self.signer
+            .change_addr_at(index)
+            .expect("valid path")
+            .to_string()
+    }
 }
 
 pub fn new_wallet(
@@ -121,6 +135,7 @@ fn wallet_poll(
     }
 
     loop {
+        println!("Polling electrum");
         for (script, coin_path) in &watched_coins {
             if let Ok((coins, _txs)) = client.get_coins_at(script) {
                 let coins: Vec<_> = coins
@@ -142,7 +157,8 @@ fn wallet_poll(
                     }
                 } // release store lock
             }
-            thread::sleep(Duration::from_secs(5));
         }
+        println!("----");
+        thread::sleep(Duration::from_secs(5));
     }
 }

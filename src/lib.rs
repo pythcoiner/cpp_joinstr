@@ -117,6 +117,8 @@ pub mod cpp_joinstr {
     extern "Rust" {
         type Wallet;
         fn spendable_coins(&self) -> Box<Coins>;
+        fn recv_addr_at(&self, index: u32) -> String;
+        fn change_addr_at(&self, index: u32) -> String;
 
         fn new_wallet(
             mnemonic: Box<Mnemonic>,

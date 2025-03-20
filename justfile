@@ -5,4 +5,4 @@ clean:
 
 build:
     just clean
-    ./build.sh
+    cargo build --release
