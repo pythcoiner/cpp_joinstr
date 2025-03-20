@@ -141,6 +141,7 @@ pub mod cpp_joinstr {
         );
         fn join_pool(&mut self, outpoint: String, pool_id: String);
         fn pool(&mut self, pool_id: String) -> Box<Pool>;
+        fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32);
 
         fn new_wallet(
             mnemonic: Box<Mnemonic>,

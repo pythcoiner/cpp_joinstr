@@ -7,7 +7,7 @@ use std::{
 use joinstr::{
     bip39,
     miniscript::bitcoin::{self, Sequence},
-    nostr::{error, sync::NostrClient},
+    nostr::{self, error, sync::NostrClient},
     signer::{self, CoinPath, WpkhHotSigner},
     simple_nostr_client::nostr::key::Keys,
 };
@@ -35,6 +35,7 @@ pub struct Wallet {
     electrum_url: String,
     electrum_port: u16,
     nostr_addr: String,
+    network: bitcoin::Network,
 }
 
 // Rust only interface
@@ -60,6 +61,7 @@ impl Wallet {
             electrum_url: addr,
             electrum_port: port,
             nostr_addr: relay,
+            network,
         };
         wallet.start_poll_coins();
         wallet.start_poll_pools(back);
@@ -163,6 +165,14 @@ impl Wallet {
             .change_addr_at(index)
             .expect("valid path")
             .to_string()
+    }
+
+    pub fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32) {
+        let relay = self.nostr_addr.clone();
+        let network = self.network;
+        thread::spawn(move || {
+            dummy_pool(relay, denomination, peers, timeout, fee, network);
+        });
     }
 }
 
@@ -291,5 +301,29 @@ fn pool_poller(
             let mut store = pool_store.lock().expect("poisoned");
             store.update(pool, PoolStatus::Available);
         } // release store lock
+    }
+}
+
+fn dummy_pool(
+    relay: String,
+    denomination: u64,
+    peers: usize,
+    timeout: u64,
+    fee: u32,
+    network: bitcoin::Network,
+) {
+    let mut client = NostrClient::new("pool_listener")
+        .relay(relay.clone())
+        .unwrap()
+        .keys(Keys::generate())
+        .unwrap();
+    if let Err(e) = client.connect_nostr() {
+        println!("dummy_pool() fail connect nostr relay: {:?}", e);
+    }
+    let key = client.get_keys().expect("have keys").public_key();
+
+    let pool = nostr::Pool::create(relay, denomination, peers, timeout, fee, network, key);
+    if let Err(e) = client.post_event(pool.try_into().expect("valid pool")) {
+        println!("dummy_pool() fail to broadcast pool: {:?}", e);
     }
 }
