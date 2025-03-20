@@ -130,7 +130,9 @@ pub mod cpp_joinstr {
         fn denomination_btc(&self) -> f64;
         fn peers(&self) -> usize;
         fn relay(&self) -> String;
-        fn fee(&self) -> u32;
+        fn fees(&self) -> u32;
+        fn id(&self) -> String;
+        fn timeout(&self) -> u64;
     }
 
     extern "Rust" {

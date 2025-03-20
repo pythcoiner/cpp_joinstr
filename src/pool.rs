@@ -1,4 +1,4 @@
-use joinstr::nostr::{self, Fee};
+use joinstr::nostr::{self, Fee, Timeline};
 
 #[derive(Clone)]
 pub struct Pool {
@@ -6,12 +6,30 @@ pub struct Pool {
 }
 
 impl Pool {
+    pub fn id(&self) -> String {
+        self.inner.id.clone()
+    }
+
     pub fn denomination_sat(&self) -> u64 {
         self.inner.payload.as_ref().unwrap().denomination.to_sat()
     }
 
     pub fn denomination_btc(&self) -> f64 {
         self.inner.payload.as_ref().unwrap().denomination.to_btc()
+    }
+
+    pub fn fees(&self) -> u32 {
+        if let Fee::Fixed(fee) = self.inner.payload.as_ref().unwrap().fee {
+            return fee;
+        }
+        unreachable!()
+    }
+
+    pub fn timeout(&self) -> u64 {
+        if let Timeline::Simple(timeout) = self.inner.payload.as_ref().unwrap().timeout {
+            return timeout;
+        }
+        unreachable!()
     }
 
     pub fn peers(&self) -> usize {
@@ -27,20 +45,6 @@ impl Pool {
             .first()
             .unwrap()
             .to_string()
-    }
-
-    pub fn fee(&self) -> u32 {
-        self.inner
-            .payload
-            .as_ref()
-            .map(|p| {
-                if let Fee::Fixed(fee) = p.fee {
-                    fee
-                } else {
-                    unreachable!()
-                }
-            })
-            .unwrap()
     }
 }
 
