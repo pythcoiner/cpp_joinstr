@@ -7,6 +7,8 @@ pub mod pool;
 pub mod pool_store;
 pub mod wallet;
 
+use std::fmt::Display;
+
 pub use address::{address_from_string, Address};
 pub use coin::Coin;
 use joinstr::miniscript::bitcoin;
@@ -22,6 +24,10 @@ pub mod cpp_joinstr {
         UpdateCoins,
         UpdateWallet,
         Error,
+    }
+
+    extern "Rust" {
+        fn signal_flag_to_string(signal: SignalFlag) -> String;
     }
 
     pub enum Network {
@@ -157,7 +163,7 @@ pub mod cpp_joinstr {
     }
 }
 
-use cpp_joinstr::Network;
+use cpp_joinstr::{Network, SignalFlag};
 
 impl Network {
     pub fn boxed(&self) -> Box<Network> {
@@ -227,4 +233,19 @@ impl Txid {
     pub fn value(&self) -> String {
         self.unwrap()
     }
+}
+
+impl Display for SignalFlag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            SignalFlag::Error => write!(f, "Error"),
+            SignalFlag::UpdateCoins => write!(f, "UpdateCoins"),
+            SignalFlag::UpdateWallet => write!(f, "UpdateWallet"),
+            _ => panic!(),
+        }
+    }
+}
+
+pub fn signal_flag_to_string(signal: SignalFlag) -> String {
+    signal.to_string()
 }
