@@ -50,6 +50,7 @@ impl Wallet {
     }
 
     fn start_poll(&mut self, addr: String, port: u16) {
+        println!("Wallet::start_poll()");
         let coin_store = self.coin_store.clone();
         let sender = self.sender.clone();
         let signer = self.signer.clone();
@@ -114,6 +115,7 @@ fn wallet_poll(
         Err(e) => {
             let mut signal = Signal::new();
             signal.set_error(e.to_string());
+            println!("wallet_poll(): fail to create electrum client {}", e);
             sender.send(signal).unwrap();
             return;
         }
@@ -135,30 +137,35 @@ fn wallet_poll(
     }
 
     loop {
-        println!("Polling electrum");
+        let mut coin_buff = Vec::new();
         for (script, coin_path) in &watched_coins {
-            if let Ok((coins, _txs)) = client.get_coins_at(script) {
-                let coins: Vec<_> = coins
-                    .into_iter()
-                    .map(|(txout, op)| {
-                        let sequence = Sequence(0);
-                        signer::Coin {
-                            txout,
-                            outpoint: op,
-                            sequence,
-                            coin_path: *coin_path,
-                        }
-                    })
-                    .collect();
-                {
-                    let mut store = coin_store.lock().expect("poisoned");
-                    for coin in coins {
-                        store.update(coin, CoinStatus::Confirmed);
-                    }
-                } // release store lock
+            match client.get_coins_at(script) {
+                Ok((coins, _txs)) => {
+                    let mut coins: Vec<_> = coins
+                        .into_iter()
+                        .map(|(txout, op)| {
+                            let sequence = Sequence(0);
+                            signer::Coin {
+                                txout,
+                                outpoint: op,
+                                sequence,
+                                coin_path: *coin_path,
+                            }
+                        })
+                        .collect();
+                    coin_buff.append(&mut coins);
+                }
+                Err(e) => {
+                    println!("wallet_poll(): fail to get_coins_at() {}", e);
+                }
             }
         }
-        println!("----");
+        {
+            let mut store = coin_store.lock().expect("poisoned");
+            for coin in coin_buff {
+                store.update(coin, CoinStatus::Confirmed);
+            }
+        } // release store lock
         thread::sleep(Duration::from_secs(5));
     }
 }
