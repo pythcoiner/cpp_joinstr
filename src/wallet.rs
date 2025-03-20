@@ -174,6 +174,10 @@ impl Wallet {
             dummy_pool(relay, denomination, peers, timeout, fee, network);
         });
     }
+
+    pub fn relay(&self) -> String {
+        self.nostr_addr.clone()
+    }
 }
 
 pub fn new_wallet(
