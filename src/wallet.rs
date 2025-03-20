@@ -64,7 +64,14 @@ impl Wallet {
 // C++ shared interface
 impl Wallet {
     pub fn spendable_coins(&self) -> Box<Coins> {
-        Box::new(self.coin_store.lock().expect("poisoined").spendable_coins())
+        match self.coin_store.try_lock() {
+            Ok(lock) => Box::new(lock.spendable_coins()),
+            Err(_) => {
+                let mut coins = Coins::new();
+                coins.set_error("Locked".to_string());
+                Box::new(coins)
+            }
+        }
     }
 
     pub fn poll(&mut self) -> Box<Poll> {
