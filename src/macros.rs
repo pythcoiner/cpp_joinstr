@@ -29,6 +29,10 @@ macro_rules! result {
                 self.inner.clone().unwrap()
             }
 
+            pub fn boxed(&self) -> Box<$inner> {
+                Box::new(self.inner.clone().unwrap())
+            }
+
             pub fn error(&self) -> String {
                 self.error.clone().unwrap_or_default()
             }

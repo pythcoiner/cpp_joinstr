@@ -60,6 +60,7 @@ pub mod cpp_joinstr {
         fn is_ok(&self) -> bool;
         fn is_err(&self) -> bool;
         fn error(&self) -> String;
+        fn boxed(&self) -> Box<Signal>;
     }
 
     extern "Rust" {
@@ -67,6 +68,7 @@ pub mod cpp_joinstr {
         fn is_ok(&self) -> bool;
         fn is_err(&self) -> bool;
         fn error(&self) -> String;
+        fn unwrap(&self) -> SignalFlag;
     }
 
     extern "Rust" {
