@@ -7,13 +7,16 @@ use std::{
 use joinstr::{
     bip39,
     miniscript::bitcoin::{self, Sequence},
+    nostr::{error, sync::NostrClient},
     signer::{self, CoinPath, WpkhHotSigner},
+    simple_nostr_client::nostr::key::Keys,
 };
 
 use crate::{
     coin_store::CoinStore,
-    cpp_joinstr::{CoinStatus, Network, SignalFlag},
-    result, Coins, Mnemonic,
+    cpp_joinstr::{CoinStatus, Network, PoolStatus, SignalFlag},
+    pool_store::PoolStore,
+    result, Coins, Mnemonic, Pool, Pools,
 };
 
 result!(Poll, Signal);
@@ -23,25 +26,43 @@ result!(Signal, SignalFlag);
 #[derive(Debug)]
 pub struct Wallet {
     coin_store: Arc<Mutex<CoinStore>>,
+    pool_store: Arc<Mutex<PoolStore>>,
     signals: mpsc::Receiver<Signal>,
     sender: mpsc::Sender<Signal>,
     signer: WpkhHotSigner,
-    poller: Option<JoinHandle<()>>,
+    coin_poller: Option<JoinHandle<()>>,
+    pool_poller: Option<JoinHandle<()>>,
+    electrum_url: String,
+    electrum_port: u16,
+    nostr_addr: String,
 }
 
 // Rust only interface
 impl Wallet {
-    fn new(mnemonic: bip39::Mnemonic, network: bitcoin::Network, addr: String, port: u16) -> Self {
+    fn new(
+        mnemonic: bip39::Mnemonic,
+        network: bitcoin::Network,
+        addr: String,
+        port: u16,
+        relay: String,
+        back: u64,
+    ) -> Self {
         let (sender, signals) = mpsc::channel();
         let mut wallet = Wallet {
             coin_store: Default::default(),
+            pool_store: Default::default(),
             signals,
             sender,
             signer: WpkhHotSigner::new_from_mnemonics(network, &mnemonic.to_string())
                 .expect("valid mnemonic"),
-            poller: None,
+            coin_poller: None,
+            pool_poller: None,
+            electrum_url: addr,
+            electrum_port: port,
+            nostr_addr: relay,
         };
-        wallet.start_poll(addr, port);
+        wallet.start_poll_coins();
+        wallet.start_poll_pools(back);
         wallet
     }
 
@@ -49,15 +70,29 @@ impl Wallet {
         Box::new(self)
     }
 
-    fn start_poll(&mut self, addr: String, port: u16) {
-        println!("Wallet::start_poll()");
+    fn start_poll_coins(&mut self) {
+        println!("Wallet::start_poll_coins()");
         let coin_store = self.coin_store.clone();
         let sender = self.sender.clone();
         let signer = self.signer.clone();
+        let addr = self.electrum_url.clone();
+        let port = self.electrum_port;
         let poller = thread::spawn(move || {
-            wallet_poll(addr, port, coin_store, signer, sender);
+            coin_poller(addr, port, coin_store, signer, sender);
         });
-        self.poller = Some(poller);
+        self.coin_poller = Some(poller);
+    }
+
+    fn start_poll_pools(&mut self, back: u64) {
+        println!("Wallet::start_poll_pools()");
+        let relay = self.nostr_addr.clone();
+        let pool_store = self.pool_store.clone();
+        let sender = self.sender.clone();
+
+        let poller = thread::spawn(move || {
+            pool_poller(relay, pool_store, sender, back);
+        });
+        self.pool_poller = Some(poller);
     }
 }
 
@@ -68,13 +103,43 @@ impl Wallet {
             Ok(lock) => Box::new(lock.spendable_coins()),
             Err(_) => {
                 let mut coins = Coins::new();
-                coins.set_error("Locked".to_string());
+                coins.set_error("CoinStore Locked".to_string());
                 Box::new(coins)
             }
         }
     }
 
-    pub fn poll(&mut self) -> Box<Poll> {
+    pub fn pools(&self) -> Box<Pools> {
+        match self.pool_store.try_lock() {
+            Ok(lock) => Box::new(lock.available_pools()),
+            Err(_) => {
+                let mut pools = Pools::new();
+                pools.set_error("PoolStore Locked".to_string());
+                Box::new(pools)
+            }
+        }
+    }
+
+    pub fn create_pool(
+        &mut self,
+        _outpoint: String,
+        _denomination: f64,
+        _fee: u32,
+        _max_duration: u64,
+        _peers: usize,
+    ) {
+        todo!()
+    }
+
+    pub fn join_pool(&mut self, _outpoint: String, _pool_id: String) {
+        todo!()
+    }
+
+    pub fn pool(&mut self, _pool_id: String) -> Box<Pool> {
+        todo!()
+    }
+
+    pub fn try_recv(&mut self) -> Box<Poll> {
         let mut poll = Poll::new();
         match self.signals.try_recv() {
             Ok(signal) => poll.set(signal),
@@ -106,11 +171,13 @@ pub fn new_wallet(
     network: Network,
     addr: String,
     port: u16,
+    relay: String,
+    back: u64,
 ) -> Box<Wallet> {
-    Wallet::new((*mnemonic).into(), network.into(), addr, port).boxed()
+    Wallet::new((*mnemonic).into(), network.into(), addr, port, relay, back).boxed()
 }
 
-fn wallet_poll(
+fn coin_poller(
     addr: String,
     port: u16,
     coin_store: Arc<Mutex<CoinStore>>,
@@ -174,5 +241,55 @@ fn wallet_poll(
             }
         } // release store lock
         thread::sleep(Duration::from_secs(5));
+    }
+}
+
+fn pool_poller(
+    relay: String,
+    pool_store: Arc<Mutex<PoolStore>>,
+    sender: mpsc::Sender<Signal>,
+    back: u64,
+) {
+    let mut pool_listener = NostrClient::new("pool_listener")
+        .relay(relay.clone())
+        .unwrap()
+        .keys(Keys::generate())
+        .unwrap();
+    pool_listener.connect_nostr().unwrap();
+    pool_listener.subscribe_pools(back).unwrap();
+
+    loop {
+        let pool = match pool_listener.receive_pool_notification() {
+            Ok(Some(pool)) => pool,
+            Ok(None) => {
+                thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+            Err(e) => match e {
+                error::Error::Disconnected | error::Error::NotConnected => {
+                    // connexion lost try to reconnect
+                    pool_listener = NostrClient::new("pool_listener")
+                        .relay(relay.clone())
+                        .unwrap()
+                        .keys(Keys::generate())
+                        .unwrap();
+                    pool_listener.connect_nostr().unwrap();
+                    pool_listener.subscribe_pools(back).unwrap();
+                    thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+                e => {
+                    println!("pool_poller: {:?}", e);
+                    let mut signal = Signal::new();
+                    signal.set_error(format!("pool_poller: {:?}", e));
+                    sender.send(signal).unwrap();
+                    return;
+                }
+            },
+        };
+        {
+            let mut store = pool_store.lock().expect("poisoned");
+            store.update(pool, PoolStatus::Available);
+        } // release store lock
     }
 }

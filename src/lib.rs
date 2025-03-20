@@ -3,14 +3,13 @@ pub mod coin;
 pub mod coin_store;
 pub mod macros;
 pub mod mnemonic;
-pub mod peer_config;
 pub mod pool;
-pub mod pool_config;
+pub mod pool_store;
 pub mod wallet;
 
 pub use address::{address_from_string, Address};
 pub use coin::Coin;
-use joinstr::{bip39, interface};
+use joinstr::miniscript::bitcoin;
 pub use mnemonic::{mnemonic_from_string, Mnemonic};
 pub use pool::Pool;
 use wallet::{new_wallet, Poll, Signal, Wallet};
@@ -38,6 +37,14 @@ pub mod cpp_joinstr {
         Confirmed,
         BeingSpend,
         Spend,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub enum PoolStatus {
+        Available,
+        Processing,
+        Joined,
+        Closed,
     }
 
     extern "Rust" {
@@ -123,57 +130,58 @@ pub mod cpp_joinstr {
         fn spendable_coins(&self) -> Box<Coins>;
         fn recv_addr_at(&self, index: u32) -> String;
         fn change_addr_at(&self, index: u32) -> String;
+        fn pools(&self) -> Box<Pools>;
+        fn create_pool(
+            &mut self,
+            outpoint: String,
+            denomination: f64,
+            fee: u32,
+            max_duration: u64,
+            peers: usize,
+        );
+        fn join_pool(&mut self, outpoint: String, pool_id: String);
+        fn pool(&mut self, pool_id: String) -> Box<Pool>;
 
         fn new_wallet(
             mnemonic: Box<Mnemonic>,
             network: Network,
             addr: String,
             port: u16,
+            relay: String,
+            back: u64,
         ) -> Box<Wallet>;
-    }
-
-    pub struct PeerConfig {
-        pub mnemonics: Box<Mnemonic>,
-        pub electrum_url: String,
-        pub electrum_port: u16,
-        pub input: Box<Coin>,
-        pub output: Box<Address>,
-        pub relay: String,
-    }
-
-    pub struct PoolConfig {
-        pub denomination: f64,
-        pub fee: u32,
-        pub max_duration: u64,
-        pub peers: usize,
-        pub network: Box<Network>,
-    }
-
-    extern "Rust" {
-
-        fn list_coins(
-            mnemonics: Box<Mnemonic>,
-            electrum_url: String,
-            electrum_port: u16,
-            range_start: u32,
-            range_end: u32,
-            network: Box<Network>,
-        ) -> Box<Coins>;
-
-        fn list_pools(back: u64, timeout: u64, relay: String) -> Box<Pools>;
-
-        fn initiate_coinjoin(config: PoolConfig, peer: PeerConfig) -> Box<Txid>;
-
-        fn join_coinjoin(pool: Box<Pool>, peer: PeerConfig) -> Box<Txid>;
-
     }
 }
 
-use cpp_joinstr::{Network, PeerConfig, PoolConfig};
+use cpp_joinstr::Network;
 
 impl Network {
     pub fn boxed(&self) -> Box<Network> {
         Box::new(*self)
+    }
+}
+
+impl From<Network> for bitcoin::Network {
+    fn from(value: Network) -> Self {
+        match value {
+            Network::Signet => bitcoin::Network::Signet,
+            Network::Regtest => bitcoin::Network::Regtest,
+            Network::Testnet => bitcoin::Network::Testnet,
+            Network::Bitcoin => bitcoin::Network::Bitcoin,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl From<bitcoin::Network> for Network {
+    fn from(value: bitcoin::Network) -> Self {
+        match value {
+            bitcoin::Network::Signet => Network::Signet,
+            bitcoin::Network::Regtest => Network::Regtest,
+            bitcoin::Network::Testnet => Network::Testnet,
+            bitcoin::Network::Bitcoin => Network::Bitcoin,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -209,75 +217,10 @@ impl Pools {
     }
 }
 
-pub fn list_coins(
-    #[allow(clippy::boxed_local)] mnemonics: Box<Mnemonic>,
-    electrum_url: String,
-    electrum_port: u16,
-    range_start: u32,
-    range_end: u32,
-    #[allow(clippy::boxed_local)] network: Box<Network>,
-) -> Box<Coins> {
-    let range = (range_start, range_end);
-    let mut res = Coins::new();
-
-    let mnemonics: bip39::Mnemonic = (*mnemonics).into();
-    let mnemonics = mnemonics.to_string();
-
-    match interface::list_coins(
-        mnemonics,
-        electrum_url,
-        electrum_port,
-        range,
-        (*network).into(),
-    ) {
-        Ok(r) => {
-            let coins = r.into_iter().map(|c| Box::new(c.into())).collect();
-            res.set(coins);
-        }
-        Err(e) => res.set_error(e.to_string()),
-    }
-
-    Box::new(res)
-}
-
-pub fn list_pools(back: u64, timeout: u64, relay: String) -> Box<Pools> {
-    let mut res = Pools::new();
-
-    match interface::list_pools(back, timeout, relay) {
-        Ok(pools) => {
-            let pools = pools.into_iter().map(|p| Box::new(p.into())).collect();
-            res.set(pools);
-        }
-        Err(e) => res.set_error(format!("{e}")),
-    }
-
-    Box::new(res)
-}
-
 result!(Txid, String);
 
 impl Txid {
     pub fn value(&self) -> String {
         self.unwrap()
     }
-}
-
-pub fn initiate_coinjoin(config: PoolConfig, peer: PeerConfig) -> Box<Txid> {
-    let mut res = Txid::new();
-    match interface::initiate_coinjoin(config.into(), peer.into()) {
-        Ok(txid) => res.set(txid.to_string()),
-        Err(e) => res.set_error(format!("{e}")),
-    }
-
-    Box::new(res)
-}
-
-pub fn join_coinjoin(pool: Box<Pool>, peer: PeerConfig) -> Box<Txid> {
-    let mut res = Txid::new();
-    match interface::join_coinjoin((*pool).into(), peer.into()) {
-        Ok(txid) => res.set(txid.to_string()),
-        Err(e) => res.set_error(format!("{e}")),
-    }
-
-    Box::new(res)
 }
