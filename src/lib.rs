@@ -41,7 +41,8 @@ pub mod cpp_joinstr {
     }
 
     extern "Rust" {
-        type Coin;
+        #[rust_name = Coin]
+        type RustCoin;
         fn amount_sat(&self) -> u64;
         fn amount_btc(&self) -> f64;
         fn outpoint(&self) -> String;
@@ -78,7 +79,8 @@ pub mod cpp_joinstr {
     }
 
     extern "Rust" {
-        type Coins;
+        #[rust_name = Coins]
+        type RustCoins;
         fn is_ok(&self) -> bool;
         fn is_err(&self) -> bool;
         fn error(&self) -> String;
@@ -88,7 +90,8 @@ pub mod cpp_joinstr {
     }
 
     extern "Rust" {
-        type Pools;
+        #[rust_name = Pools]
+        type RustPools;
         fn is_ok(&self) -> bool;
         fn is_err(&self) -> bool;
         fn error(&self) -> String;
@@ -106,7 +109,8 @@ pub mod cpp_joinstr {
     }
 
     extern "Rust" {
-        type Pool;
+        #[rust_name = Pool]
+        type RustPool;
         fn denomination_sat(&self) -> u64;
         fn denomination_btc(&self) -> f64;
         fn peers(&self) -> usize;
