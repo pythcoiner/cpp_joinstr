@@ -269,31 +269,52 @@ fn pool_poller(
         .unwrap()
         .keys(Keys::generate())
         .unwrap();
-    pool_listener.connect_nostr().unwrap();
-    pool_listener.subscribe_pools(back).unwrap();
+    if let Err(e) = pool_listener.connect_nostr() {
+        let error = format!("pool_poller() fail to connect: {e:?}");
+        let mut signal = Signal::new();
+        signal.set_error(error);
+        sender.send(signal).unwrap();
+    }
+    if let Err(e) = pool_listener.subscribe_pools(back) {
+        let error = format!("pool_poller() fail to subscribe pool: {e:?}");
+        let mut signal = Signal::new();
+        signal.set_error(error);
+        sender.send(signal).unwrap();
+    }
 
     loop {
         let pool = match pool_listener.receive_pool_notification() {
             Ok(Some(pool)) => pool,
             Ok(None) => {
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(Duration::from_millis(300));
                 continue;
             }
             Err(e) => match e {
                 error::Error::Disconnected | error::Error::NotConnected => {
+                    println!("pool_poller() connexion lost: {e:?}");
                     // connexion lost try to reconnect
                     pool_listener = NostrClient::new("pool_listener")
                         .relay(relay.clone())
                         .unwrap()
                         .keys(Keys::generate())
                         .unwrap();
-                    pool_listener.connect_nostr().unwrap();
-                    pool_listener.subscribe_pools(back).unwrap();
+                    if let Err(e) = pool_listener.connect_nostr() {
+                        let error = format!("pool_poller() fail to re-connect: {e:?}");
+                        let mut signal = Signal::new();
+                        signal.set_error(error);
+                        sender.send(signal).unwrap();
+                    }
+                    if let Err(e) = pool_listener.subscribe_pools(back) {
+                        let error = format!("pool_poller() fail to re-subscribe: {e:?}");
+                        let mut signal = Signal::new();
+                        signal.set_error(error);
+                        sender.send(signal).unwrap();
+                    }
                     thread::sleep(Duration::from_millis(50));
                     continue;
                 }
                 e => {
-                    println!("pool_poller: {:?}", e);
+                    println!("pool_poller(): {:?}", e);
                     let mut signal = Signal::new();
                     signal.set_error(format!("pool_poller: {:?}", e));
                     sender.send(signal).unwrap();
