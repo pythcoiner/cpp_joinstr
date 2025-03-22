@@ -13,6 +13,7 @@ use joinstr::{
 };
 
 use crate::{
+    address_store::AddressStore,
     coin_store::CoinStore,
     cpp_joinstr::{CoinStatus, Network, PoolStatus, SignalFlag},
     pool_store::PoolStore,
@@ -24,11 +25,73 @@ result!(Poll, Signal);
 result!(Signal, SignalFlag);
 
 #[derive(Debug)]
+pub enum Notification {
+    Electrum(CoinPollerMsg),
+    Joinstr(PoolPollerMsg),
+}
+
+impl From<CoinPollerMsg> for Notification {
+    fn from(value: CoinPollerMsg) -> Self {
+        Notification::Electrum(value)
+    }
+}
+
+impl From<PoolPollerMsg> for Notification {
+    fn from(value: PoolPollerMsg) -> Self {
+        Notification::Joinstr(value)
+    }
+}
+
+#[derive(Debug)]
+pub enum Error {
+    Nostr(nostr::error::Error),
+}
+
+impl From<nostr::error::Error> for Error {
+    fn from(value: nostr::error::Error) -> Self {
+        Error::Nostr(value)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum CoinPollerMsg {
+    WatchSpk {
+        account: u32,
+        index: u32,
+    },
+    CoinUpdate {
+        coin: signer::Coin,
+        status: CoinStatus,
+    },
+    Started(mpsc::Sender<PoolPollerMsg>),
+    Stop,
+    Error(joinstr::electrum::Error),
+}
+
+#[derive(Debug)]
+pub enum PoolPollerMsg {
+    Started(mpsc::Sender<PoolPollerMsg>),
+    Stop,
+    Error(Error),
+}
+
+impl From<nostr::error::Error> for PoolPollerMsg {
+    fn from(value: nostr::error::Error) -> Self {
+        PoolPollerMsg::Error(Error::Nostr(value))
+    }
+}
+
+#[derive(Debug)]
 pub struct Wallet {
     coin_store: Arc<Mutex<CoinStore>>,
     pool_store: Arc<Mutex<PoolStore>>,
+    address_store: Arc<Mutex<AddressStore>>,
     signals: mpsc::Receiver<Signal>,
-    sender: mpsc::Sender<Signal>,
+    signal_sender: mpsc::Sender<Signal>,
+    receiver: mpsc::Receiver<Notification>,
+    sender: mpsc::Sender<Notification>,
+    electrum_channel: Option<mpsc::Sender<CoinPollerMsg>>,
+    pool_listener_channel: Option<mpsc::Sender<PoolPollerMsg>>,
     signer: WpkhHotSigner,
     coin_poller: Option<JoinHandle<()>>,
     pool_poller: Option<JoinHandle<()>>,
@@ -48,20 +111,34 @@ impl Wallet {
         relay: String,
         back: u64,
     ) -> Self {
-        let (sender, signals) = mpsc::channel();
+        let (signal_sender, signals) = mpsc::channel();
+        let (sender, receiver) = mpsc::channel();
+        // TODO: import saved state from local storage
+        let signer = WpkhHotSigner::new_from_mnemonics(network, &mnemonic.to_string())
+            .expect("valid mnemonic");
+        let address_store = Arc::new(Mutex::new(AddressStore::new(signer.clone(), 20, 20)));
+        let coin_store = Arc::new(Mutex::new(CoinStore::new(
+            signer.clone(),
+            address_store.clone(),
+        )));
+        // TODO: use indexes from stored state
         let mut wallet = Wallet {
-            coin_store: Default::default(),
+            coin_store,
             pool_store: Default::default(),
+            address_store,
             signals,
-            sender,
-            signer: WpkhHotSigner::new_from_mnemonics(network, &mnemonic.to_string())
-                .expect("valid mnemonic"),
+            signal_sender,
+            signer,
             coin_poller: None,
             pool_poller: None,
             electrum_url: addr,
             electrum_port: port,
             nostr_addr: relay,
             network,
+            receiver,
+            sender,
+            electrum_channel: None,
+            pool_listener_channel: None,
         };
         wallet.start_poll_coins();
         wallet.start_poll_pools(back);
@@ -154,17 +231,11 @@ impl Wallet {
     }
 
     pub fn recv_addr_at(&self, index: u32) -> String {
-        self.signer
-            .recv_addr_at(index)
-            .expect("valid path")
-            .to_string()
+        self.signer.recv_addr_at(index).to_string()
     }
 
     pub fn change_addr_at(&self, index: u32) -> String {
-        self.signer
-            .change_addr_at(index)
-            .expect("valid path")
-            .to_string()
+        self.signer.change_addr_at(index).to_string()
     }
 
     pub fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32) {
@@ -191,20 +262,41 @@ pub fn new_wallet(
     Wallet::new((*mnemonic).into(), network.into(), addr, port, relay, back).boxed()
 }
 
-fn coin_poller(
+fn listener<T: From<CoinPollerMsg>>(
     addr: String,
     port: u16,
     coin_store: Arc<Mutex<CoinStore>>,
     signer: WpkhHotSigner,
-    sender: mpsc::Sender<Signal>,
+    sender: mpsc::Sender<T>,
+) {
+    let (channel, receiver) = mpsc::channel();
+
+    let mut client = match joinstr::electrum::Client::new(&addr, port) {
+        Ok(c) => c,
+        Err(e) => {
+            println!("coin_poll(): fail to create electrum client {}", e);
+            sender.send(CoinPollerMsg::Error(e).into()).unwrap();
+            return;
+        }
+    };
+
+    sender
+        .send(CoinPollerMsg::Started(channel).into())
+        .expect("wallet thread stopped");
+}
+
+fn coin_poller<T: From<CoinPollerMsg>>(
+    addr: String,
+    port: u16,
+    coin_store: Arc<Mutex<CoinStore>>,
+    signer: WpkhHotSigner,
+    sender: mpsc::Sender<T>,
 ) {
     let mut client = match joinstr::electrum::Client::new(&addr, port) {
         Ok(c) => c,
         Err(e) => {
-            let mut signal = Signal::new();
-            signal.set_error(e.to_string());
             println!("wallet_poll(): fail to create electrum client {}", e);
-            sender.send(signal).unwrap();
+            sender.send(CoinPollerMsg::Error(e).into()).unwrap();
             return;
         }
     };
@@ -245,6 +337,7 @@ fn coin_poller(
                 }
                 Err(e) => {
                     println!("wallet_poll(): fail to get_coins_at() {}", e);
+                    sender.send(CoinPollerMsg::Error(e).into()).unwrap();
                 }
             }
         }
@@ -258,10 +351,10 @@ fn coin_poller(
     }
 }
 
-fn pool_poller(
+fn pool_poller<N: From<PoolPollerMsg> + Send + 'static>(
     relay: String,
     pool_store: Arc<Mutex<PoolStore>>,
-    sender: mpsc::Sender<Signal>,
+    sender: mpsc::Sender<N>,
     back: u64,
 ) {
     let mut pool_listener = NostrClient::new("pool_listener")
@@ -270,16 +363,12 @@ fn pool_poller(
         .keys(Keys::generate())
         .unwrap();
     if let Err(e) = pool_listener.connect_nostr() {
-        let error = format!("pool_poller() fail to connect: {e:?}");
-        let mut signal = Signal::new();
-        signal.set_error(error);
-        sender.send(signal).unwrap();
+        let msg: PoolPollerMsg = e.into();
+        sender.send(msg.into()).unwrap();
     }
     if let Err(e) = pool_listener.subscribe_pools(back) {
-        let error = format!("pool_poller() fail to subscribe pool: {e:?}");
-        let mut signal = Signal::new();
-        signal.set_error(error);
-        sender.send(signal).unwrap();
+        let msg: PoolPollerMsg = e.into();
+        sender.send(msg.into()).unwrap();
     }
 
     loop {
@@ -299,25 +388,20 @@ fn pool_poller(
                         .keys(Keys::generate())
                         .unwrap();
                     if let Err(e) = pool_listener.connect_nostr() {
-                        let error = format!("pool_poller() fail to re-connect: {e:?}");
-                        let mut signal = Signal::new();
-                        signal.set_error(error);
-                        sender.send(signal).unwrap();
+                        let msg: PoolPollerMsg = e.into();
+                        sender.send(msg.into()).unwrap();
                     }
                     if let Err(e) = pool_listener.subscribe_pools(back) {
-                        let error = format!("pool_poller() fail to re-subscribe: {e:?}");
-                        let mut signal = Signal::new();
-                        signal.set_error(error);
-                        sender.send(signal).unwrap();
+                        let msg: PoolPollerMsg = e.into();
+                        sender.send(msg.into()).unwrap();
                     }
                     thread::sleep(Duration::from_millis(50));
                     continue;
                 }
                 e => {
                     println!("pool_poller(): {:?}", e);
-                    let mut signal = Signal::new();
-                    signal.set_error(format!("pool_poller: {:?}", e));
-                    sender.send(signal).unwrap();
+                    let msg: PoolPollerMsg = e.into();
+                    sender.send(msg.into()).unwrap();
                     return;
                 }
             },
