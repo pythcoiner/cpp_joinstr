@@ -1,21 +1,20 @@
-pub mod address;
-pub mod coin;
+pub mod account;
+pub mod address_store;
 pub mod coin_store;
 pub mod macros;
 pub mod mnemonic;
 pub mod pool;
 pub mod pool_store;
-pub mod wallet;
 pub mod tx_store;
 
 use std::fmt::Display;
 
-pub use address::{address_from_string, Address};
-pub use coin::Coin;
+use account::{new_wallet, Account, Poll, Signal};
+use address_store::AddressEntry;
+use coin_store::CoinEntry;
 use joinstr::miniscript::bitcoin;
 pub use mnemonic::{mnemonic_from_string, Mnemonic};
 pub use pool::Pool;
-use wallet::{new_wallet, Poll, Signal, Wallet};
 
 #[cxx::bridge]
 pub mod cpp_joinstr {
@@ -43,7 +42,7 @@ pub mod cpp_joinstr {
         Unconfirmed,
         Confirmed,
         BeingSpend,
-        Spend,
+        Spent,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,12 +53,30 @@ pub mod cpp_joinstr {
         Closed,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
+    pub enum AddrAccount {
+        Receive,
+        Change,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub enum AddressStatus {
+        NotUsed,
+        Used,
+        Reused,
+    }
+
     extern "Rust" {
-        #[rust_name = Coin]
+        #[rust_name = CoinEntry]
         type RustCoin;
         fn amount_sat(&self) -> u64;
         fn amount_btc(&self) -> f64;
-        fn outpoint(&self) -> String;
+        #[cxx_name = outpoint]
+        fn outpoint_str(&self) -> String;
+        #[cxx_name = status]
+        fn status_str(&self) -> String;
+        fn boxed(&self) -> Box<CoinEntry>;
+        fn address(&self) -> String;
     }
 
     extern "Rust" {
@@ -87,14 +104,6 @@ pub mod cpp_joinstr {
     }
 
     extern "Rust" {
-        type Address;
-        fn is_ok(&self) -> bool;
-        fn is_err(&self) -> bool;
-        fn error(&self) -> String;
-        fn address_from_string(value: String) -> Box<Address>;
-    }
-
-    extern "Rust" {
         #[rust_name = Coins]
         type RustCoins;
         fn is_ok(&self) -> bool;
@@ -102,7 +111,7 @@ pub mod cpp_joinstr {
         fn error(&self) -> String;
         fn count(&self) -> usize;
         fn is_empty(&self) -> bool;
-        fn get(&self, index: usize) -> Box<Coin>;
+        fn get(&self, index: usize) -> Box<CoinEntry>;
     }
 
     extern "Rust" {
@@ -114,6 +123,26 @@ pub mod cpp_joinstr {
         fn count(&self) -> usize;
         fn is_empty(&self) -> bool;
         fn get(&self, index: usize) -> Box<Pool>;
+    }
+
+    extern "Rust" {
+        #[rust_name = AddressEntry]
+        type Address;
+        fn status(&self) -> AddressStatus;
+        fn value(&self) -> String;
+        fn account(&self) -> AddrAccount;
+        fn index(&self) -> u32;
+    }
+
+    extern "Rust" {
+        #[rust_name = Addresses]
+        type AddressList;
+        fn is_ok(&self) -> bool;
+        fn is_err(&self) -> bool;
+        fn error(&self) -> String;
+        fn count(&self) -> usize;
+        fn is_empty(&self) -> bool;
+        fn get(&self, index: usize) -> Box<AddressEntry>;
     }
 
     extern "Rust" {
@@ -137,7 +166,7 @@ pub mod cpp_joinstr {
     }
 
     extern "Rust" {
-        type Wallet;
+        type Account;
         fn spendable_coins(&self) -> Box<Coins>;
         fn recv_addr_at(&self, index: u32) -> String;
         fn change_addr_at(&self, index: u32) -> String;
@@ -163,7 +192,7 @@ pub mod cpp_joinstr {
             port: u16,
             relay: String,
             back: u64,
-        ) -> Box<Wallet>;
+        ) -> Box<Account>;
     }
 }
 
@@ -199,8 +228,7 @@ impl From<bitcoin::Network> for Network {
     }
 }
 
-result!(Coins, Vec<Box<Coin>>);
-
+result!(Coins, Vec<Box<CoinEntry>>);
 impl Coins {
     pub fn count(&self) -> usize {
         self.inner.as_ref().map(|v| v.len()).unwrap_or(0)
@@ -210,13 +238,12 @@ impl Coins {
         self.count() != 0
     }
 
-    pub fn get(&self, index: usize) -> Box<Coin> {
+    pub fn get(&self, index: usize) -> Box<CoinEntry> {
         self.inner.as_ref().unwrap().get(index).unwrap().clone()
     }
 }
 
 result!(Pools, Vec<Box<Pool>>);
-
 impl Pools {
     pub fn count(&self) -> usize {
         self.inner.as_ref().map(|v| v.len()).unwrap_or(0)
@@ -231,8 +258,22 @@ impl Pools {
     }
 }
 
-result!(Txid, String);
+result!(Addresses, Vec<Box<AddressEntry>>);
+impl Addresses {
+    pub fn count(&self) -> usize {
+        self.inner.as_ref().map(|v| v.len()).unwrap_or(0)
+    }
 
+    pub fn is_empty(&self) -> bool {
+        self.count() != 0
+    }
+
+    pub fn get(&self, index: usize) -> Box<AddressEntry> {
+        self.inner.as_ref().unwrap().get(index).unwrap().clone()
+    }
+}
+
+result!(Txid, String);
 impl Txid {
     pub fn value(&self) -> String {
         self.unwrap()
