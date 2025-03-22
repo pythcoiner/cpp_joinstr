@@ -6,6 +6,7 @@ pub mod mnemonic;
 pub mod pool;
 pub mod pool_store;
 pub mod wallet;
+pub mod tx_store;
 
 use std::fmt::Display;
 
