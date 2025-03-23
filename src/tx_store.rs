@@ -2,6 +2,8 @@ use joinstr::miniscript::bitcoin::{self, Txid};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::coin_store::Update;
+
 #[derive(Debug)]
 pub struct TxStore {
     store: BTreeMap<Txid, TxEntry>,
@@ -14,13 +16,25 @@ impl TxStore {
         }
     }
 
-    pub fn insert(&mut self, entry: TxEntry) {
+    pub fn apply_updates(&mut self, updates: Vec<Update>) {
+        //
+    }
+
+    pub fn update(&mut self, entry: TxEntry) {
         let txid = entry.txid();
         self.store.insert(txid, entry);
     }
 
     pub fn inner_get(&self, txid: &Txid) -> Option<bitcoin::Transaction> {
         self.store.get(txid).map(|e| e.tx.clone())
+    }
+
+    pub fn remove(&mut self, txid: &bitcoin::Txid) {
+        self.store.remove(txid);
+    }
+
+    pub fn update_height(&mut self, txid: &bitcoin::Txid, height: Option<u64>) {
+        self.store.get_mut(txid).expect("is present").height = height;
     }
 
     pub fn dump(&self) -> Result<serde_json::Value, serde_json::Error> {
@@ -41,7 +55,7 @@ impl Default for TxStore {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxEntry {
-    height: u64,
+    height: Option<u64>,
     tx: bitcoin::Transaction,
     merkle: Vec<Vec<u8>>,
 }
@@ -50,7 +64,7 @@ impl TxEntry {
     pub fn txid(&self) -> Txid {
         self.tx.compute_txid()
     }
-    pub fn height(&self) -> u64 {
+    pub fn height(&self) -> Option<u64> {
         self.height
     }
     pub fn tx(&self) -> &bitcoin::Transaction {

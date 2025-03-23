@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     sync::{mpsc, Arc, Mutex},
     thread::{self, JoinHandle},
     time::Duration,
@@ -6,18 +7,21 @@ use std::{
 
 use joinstr::{
     bip39,
-    miniscript::bitcoin::{self, Sequence},
+    electrum::{CoinRequest, CoinResponse},
+    miniscript::bitcoin::{self, ScriptBuf},
     nostr::{self, error, sync::NostrClient},
-    signer::{self, CoinPath, WpkhHotSigner},
+    signer::{self, WpkhHotSigner},
     simple_nostr_client::nostr::key::Keys,
 };
 
 use crate::{
-    address_store::AddressStore,
+    address_store::{AddressStore, AddressTip},
     coin_store::CoinStore,
     cpp_joinstr::{CoinStatus, Network, PoolStatus, SignalFlag},
     pool_store::PoolStore,
-    result, Coins, Mnemonic, Pool, Pools,
+    result,
+    tx_store::TxStore,
+    Coins, Mnemonic, Pool, Pools,
 };
 
 result!(Poll, Signal);
@@ -28,6 +32,7 @@ result!(Signal, SignalFlag);
 pub enum Notification {
     Electrum(CoinPollerMsg),
     Joinstr(PoolPollerMsg),
+    AddressTipChanged,
 }
 
 impl From<CoinPollerMsg> for Notification {
@@ -55,17 +60,14 @@ impl From<nostr::error::Error> for Error {
 
 #[derive(Debug, Clone)]
 pub enum CoinPollerMsg {
-    WatchSpk {
-        account: u32,
-        index: u32,
-    },
     CoinUpdate {
         coin: signer::Coin,
         status: CoinStatus,
     },
     Started(mpsc::Sender<PoolPollerMsg>),
     Stop,
-    Error(joinstr::electrum::Error),
+    Error(String),
+    Stopped,
 }
 
 #[derive(Debug)]
@@ -86,6 +88,7 @@ pub struct Wallet {
     coin_store: Arc<Mutex<CoinStore>>,
     pool_store: Arc<Mutex<PoolStore>>,
     address_store: Arc<Mutex<AddressStore>>,
+    tx_store: Arc<Mutex<TxStore>>,
     signals: mpsc::Receiver<Signal>,
     signal_sender: mpsc::Sender<Signal>,
     receiver: mpsc::Receiver<Notification>,
@@ -97,7 +100,7 @@ pub struct Wallet {
     pool_poller: Option<JoinHandle<()>>,
     electrum_url: String,
     electrum_port: u16,
-    nostr_addr: String,
+    nostr_relay: String,
     network: bitcoin::Network,
 }
 
@@ -106,9 +109,9 @@ impl Wallet {
     fn new(
         mnemonic: bip39::Mnemonic,
         network: bitcoin::Network,
-        addr: String,
-        port: u16,
-        relay: String,
+        electrum_url: String,
+        electrum_port: u16,
+        nostr_relay: String,
         back: u64,
     ) -> Self {
         let (signal_sender, signals) = mpsc::channel();
@@ -116,32 +119,46 @@ impl Wallet {
         // TODO: import saved state from local storage
         let signer = WpkhHotSigner::new_from_mnemonics(network, &mnemonic.to_string())
             .expect("valid mnemonic");
-        let address_store = Arc::new(Mutex::new(AddressStore::new(signer.clone(), 20, 20)));
+        let address_store = Arc::new(Mutex::new(AddressStore::new(
+            signer.clone(),
+            sender.clone(),
+            20,
+            20,
+        )));
+        let tx_store = Arc::new(Mutex::new(TxStore::new()));
         let coin_store = Arc::new(Mutex::new(CoinStore::new(
             signer.clone(),
             address_store.clone(),
+            tx_store.clone(),
         )));
         // TODO: use indexes from stored state
         let mut wallet = Wallet {
             coin_store,
             pool_store: Default::default(),
             address_store,
+            tx_store,
             signals,
             signal_sender,
             signer,
             coin_poller: None,
             pool_poller: None,
-            electrum_url: addr,
-            electrum_port: port,
-            nostr_addr: relay,
+            electrum_url,
+            electrum_port,
+            nostr_relay,
             network,
             receiver,
             sender,
             electrum_channel: None,
             pool_listener_channel: None,
         };
-        wallet.start_poll_coins();
+        let tx_poller = wallet.start_poll_txs();
         wallet.start_poll_pools(back);
+        wallet
+            .address_store
+            // FIXME: should we loop try_lock() instead
+            .lock()
+            .expect("poisoned")
+            .init(tx_poller);
         wallet
     }
 
@@ -149,22 +166,33 @@ impl Wallet {
         Box::new(self)
     }
 
-    fn start_poll_coins(&mut self) {
-        println!("Wallet::start_poll_coins()");
+    fn start_poll_txs(&mut self) -> mpsc::Sender<AddressTip> {
+        println!("Wallet::start_poll_txs()");
+        let (sender, address_tip) = mpsc::channel();
         let coin_store = self.coin_store.clone();
-        let sender = self.sender.clone();
+        let tx_store = self.tx_store.clone();
+        let notification = self.sender.clone();
         let signer = self.signer.clone();
         let addr = self.electrum_url.clone();
         let port = self.electrum_port;
         let poller = thread::spawn(move || {
-            coin_poller(addr, port, coin_store, signer, sender);
+            tx_poller(
+                addr,
+                port,
+                coin_store,
+                tx_store,
+                signer,
+                notification,
+                address_tip,
+            );
         });
         self.coin_poller = Some(poller);
+        sender
     }
 
     fn start_poll_pools(&mut self, back: u64) {
         println!("Wallet::start_poll_pools()");
-        let relay = self.nostr_addr.clone();
+        let relay = self.nostr_relay.clone();
         let pool_store = self.pool_store.clone();
         let sender = self.sender.clone();
 
@@ -239,7 +267,7 @@ impl Wallet {
     }
 
     pub fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32) {
-        let relay = self.nostr_addr.clone();
+        let relay = self.nostr_relay.clone();
         let network = self.network;
         thread::spawn(move || {
             dummy_pool(relay, denomination, peers, timeout, fee, network);
@@ -247,7 +275,7 @@ impl Wallet {
     }
 
     pub fn relay(&self) -> String {
-        self.nostr_addr.clone()
+        self.nostr_relay.clone()
     }
 }
 
@@ -262,92 +290,128 @@ pub fn new_wallet(
     Wallet::new((*mnemonic).into(), network.into(), addr, port, relay, back).boxed()
 }
 
-fn listener<T: From<CoinPollerMsg>>(
+fn tx_poller<T: From<CoinPollerMsg>>(
     addr: String,
     port: u16,
     coin_store: Arc<Mutex<CoinStore>>,
+    tx_store: Arc<Mutex<TxStore>>,
     signer: WpkhHotSigner,
-    sender: mpsc::Sender<T>,
-) {
-    let (channel, receiver) = mpsc::channel();
-
-    let mut client = match joinstr::electrum::Client::new(&addr, port) {
-        Ok(c) => c,
-        Err(e) => {
-            println!("coin_poll(): fail to create electrum client {}", e);
-            sender.send(CoinPollerMsg::Error(e).into()).unwrap();
-            return;
-        }
-    };
-
-    sender
-        .send(CoinPollerMsg::Started(channel).into())
-        .expect("wallet thread stopped");
-}
-
-fn coin_poller<T: From<CoinPollerMsg>>(
-    addr: String,
-    port: u16,
-    coin_store: Arc<Mutex<CoinStore>>,
-    signer: WpkhHotSigner,
-    sender: mpsc::Sender<T>,
+    notification: mpsc::Sender<T>,
+    address_tip: mpsc::Receiver<AddressTip>,
 ) {
     let mut client = match joinstr::electrum::Client::new(&addr, port) {
         Ok(c) => c,
         Err(e) => {
             println!("wallet_poll(): fail to create electrum client {}", e);
-            sender.send(CoinPollerMsg::Error(e).into()).unwrap();
+            notification
+                .send(CoinPollerMsg::Error(e.to_string()).into())
+                .unwrap();
             return;
         }
     };
 
-    let mut watched_coins = Vec::new();
-    // watch 30 coins
-    for i in 0..30 {
-        let recv = CoinPath {
-            index: Some(i),
-            depth: 0,
-        };
-        let change = CoinPath {
-            index: Some(i),
-            depth: 0,
-        };
-        watched_coins.push((signer.address_at(&recv).unwrap().script_pubkey(), recv));
-        watched_coins.push((signer.address_at(&change).unwrap().script_pubkey(), change));
-    }
+    // FIXME: here we can have a single map
+    // TODO: this map should be stored to avoid poll every spk at each launch
+    let mut paths = BTreeMap::<ScriptBuf, (u32, u32)>::new();
+    let mut statuses = BTreeMap::<ScriptBuf, Option<String>>::new();
+
+    let (request, response) = client.listen::<CoinRequest, CoinResponse>();
 
     loop {
-        let mut coin_buff = Vec::new();
-        for (script, coin_path) in &watched_coins {
-            match client.get_coins_at(script) {
-                Ok((coins, _txs)) => {
-                    let mut coins: Vec<_> = coins
-                        .into_iter()
-                        .map(|(txout, op)| {
-                            let sequence = Sequence(0);
-                            signer::Coin {
-                                txout,
-                                outpoint: op,
-                                sequence,
-                                coin_path: *coin_path,
-                            }
-                        })
-                        .collect();
-                    coin_buff.append(&mut coins);
+        let mut received = false;
+
+        // listen for AddressTip update
+        match address_tip.try_recv() {
+            Ok(AddressTip { recv, change }) => {
+                received = true;
+                let mut sub = vec![];
+                let r_spk = signer.recv_addr_at(recv).script_pubkey();
+                if !statuses.contains_key(&r_spk) {
+                    // FIXME: here we can be smart an not start at 0 but at `actual_tip`
+                    for i in 0..recv {
+                        let spk = signer.recv_addr_at(i).script_pubkey();
+                        if !statuses.contains_key(&spk) {
+                            paths.insert(spk.clone(), (0, i));
+                            statuses.insert(spk.clone(), None);
+                            sub.push(spk);
+                        }
+                    }
                 }
-                Err(e) => {
-                    println!("wallet_poll(): fail to get_coins_at() {}", e);
-                    sender.send(CoinPollerMsg::Error(e).into()).unwrap();
+                let c_spk = signer.change_addr_at(recv).script_pubkey();
+                if !statuses.contains_key(&c_spk) {
+                    // FIXME: here we can be smart an not start at 0 but at `actual_tip`
+                    for i in 0..change {
+                        let spk = signer.recv_addr_at(i).script_pubkey();
+                        if !statuses.contains_key(&spk) {
+                            paths.insert(spk.clone(), (1, i));
+                            statuses.insert(spk.clone(), None);
+                            sub.push(spk);
+                        }
+                    }
                 }
+                request.send(CoinRequest::Subscribe(sub)).unwrap();
             }
+            Err(e) => match e {
+                mpsc::TryRecvError::Empty => {}
+                mpsc::TryRecvError::Disconnected => {
+                    // FIXME: what should we do there?
+                    // it's AddressStore being dropped, but she should keep upating
+                    // the actual spk set even if it cannot grow anymore
+                }
+            },
         }
-        {
-            let mut store = coin_store.lock().expect("poisoned");
-            for coin in coin_buff {
-                store.update(coin, CoinStatus::Confirmed);
+
+        // TODO: listen for response
+        match response.try_recv() {
+            Ok(rsp) => {
+                received = true;
+                match rsp {
+                    CoinResponse::Status(elct_status) => {
+                        let mut history = vec![];
+                        for (spk, status) in elct_status {
+                            statuses.entry(spk.clone()).and_modify(|e| {
+                                if *e != status {
+                                    *e = status;
+                                    history.push(spk);
+                                }
+                            });
+                            // FIXME: should we or_insert() just in case?
+                        }
+                        // TODO: do not unwrap
+                        request.send(CoinRequest::History(history)).unwrap();
+                    }
+                    CoinResponse::History(map) => {
+                        // TODO:
+                    }
+                    CoinResponse::Txs(items) => {
+                        // TODO:
+                    }
+                    CoinResponse::Stopped => {
+                        notification.send(CoinPollerMsg::Stopped.into()).unwrap();
+                        return;
+                    }
+                    CoinResponse::Error(e) => {
+                        // TODO: do not unwrap
+                        notification.send(CoinPollerMsg::Error(e).into()).unwrap();
+                    }
+                }
             }
-        } // release store lock
-        thread::sleep(Duration::from_secs(5));
+            Err(e) => match e {
+                mpsc::TryRecvError::Empty => {}
+                mpsc::TryRecvError::Disconnected => {
+                    // NOTE: here the electrum client is dropped, we cannot continue
+                    // TODO: do not unwrap
+                    notification.send(CoinPollerMsg::Stopped.into()).unwrap();
+                    return;
+                }
+            },
+        }
+
+        if received {
+            continue;
+        }
+        // FIXME: 20 ms is likely WAY too much
+        thread::sleep(Duration::from_millis(20));
     }
 }
 

@@ -1,14 +1,25 @@
 use joinstr::{
+    electrum::CoinRequest,
     miniscript::bitcoin::{self, address::NetworkUnchecked, OutPoint, ScriptBuf},
     signer::{self, WpkhHotSigner},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::mpsc,
+};
 
 use crate::{
     cpp_joinstr::{Account, AddressStatus},
+    wallet::Notification,
     Addresses,
 };
+
+#[derive(Debug, Clone, Copy)]
+pub struct AddressTip {
+    pub recv: u32,
+    pub change: u32,
+}
 
 #[derive(Debug)]
 pub struct AddressStore {
@@ -18,28 +29,42 @@ pub struct AddressStore {
     recv_generated_tip: u32,
     change_generated_tip: u32,
     signer: WpkhHotSigner,
+    notification: mpsc::Sender<Notification>,
+    tx_poller: Option<mpsc::Sender<AddressTip>>,
 }
 
 impl AddressStore {
-    pub fn new(signer: WpkhHotSigner, recv_tip: u32, change_tip: u32) -> Self {
-        let mut store = Self {
+    pub fn new(
+        signer: WpkhHotSigner,
+        notification: mpsc::Sender<Notification>,
+        recv_tip: u32,
+        change_tip: u32,
+    ) -> Self {
+        let store = Self {
             store: BTreeMap::new(),
             recv_received_tip: 0,
             change_received_tip: 0,
             recv_generated_tip: recv_tip,
             change_generated_tip: change_tip,
             signer,
+            notification,
+            tx_poller: None,
         };
-        store.init();
         store
     }
 
     fn notify(&self) {
-        // TODO: notify the consumer that indexes changed
-        // TODO: notify electrum poller that indexes changed
+        self.notification
+            .send(Notification::AddressTipChanged)
+            .unwrap();
+        if let Some(tx_poller) = &self.tx_poller {
+            let recv = self.recv_generated_tip;
+            let change = self.change_generated_tip;
+            tx_poller.send(AddressTip { recv, change }).unwrap();
+        }
     }
 
-    fn update_recv(&mut self, index: u32) {
+    pub fn update_recv(&mut self, index: u32) {
         if index > self.recv_generated_tip {
             self.recv_generated_tip = index;
         }
@@ -48,7 +73,7 @@ impl AddressStore {
         }
         self.notify();
     }
-    fn update_change(&mut self, index: u32) {
+    pub fn update_change(&mut self, index: u32) {
         if index > self.change_generated_tip {
             self.change_generated_tip = index;
         }
@@ -58,7 +83,7 @@ impl AddressStore {
         self.notify();
     }
 
-    fn init(&mut self) {
+    pub fn init(&mut self, tx_poller: mpsc::Sender<AddressTip>) {
         for i in 0..self.recv_generated_tip {
             let addr = self.signer.recv_addr_at(i);
             let script = addr.script_pubkey();
@@ -85,6 +110,8 @@ impl AddressStore {
             };
             self.store.insert(script, entry);
         }
+        self.tx_poller = Some(tx_poller);
+        self.notify();
     }
 
     pub fn insert_coin(&mut self, coin: signer::Coin) {
