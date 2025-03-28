@@ -42,7 +42,7 @@ pub mod cpp_joinstr {
         Unconfirmed,
         Confirmed,
         BeingSpend,
-        Spend,
+        Spent,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

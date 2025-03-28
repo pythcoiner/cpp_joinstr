@@ -1,14 +1,19 @@
 use joinstr::{
-    miniscript::bitcoin::{self, address::NetworkUnchecked, OutPoint, ScriptBuf, Txid},
+    miniscript::bitcoin::{self, address::NetworkUnchecked, OutPoint, ScriptBuf, TxOut, Txid},
     signer::{self, WpkhHotSigner},
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{hash_set, BTreeMap, HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
-use crate::{address_store::AddressStore, cpp_joinstr::CoinStatus, tx_store::TxStore, Coins};
+use crate::{
+    address_store::{AddressEntry, AddressStore},
+    cpp_joinstr::CoinStatus,
+    tx_store::TxStore,
+    Coins,
+};
 
 #[derive(Debug)]
 pub struct CoinStore {
@@ -16,6 +21,7 @@ pub struct CoinStore {
     // it's only a "coin cache" as the source of truth is
     // the tx store
     store: BTreeMap<OutPoint, CoinEntry>,
+    spk_to_outpoint: BTreeMap<ScriptBuf, HashSet<OutPoint>>,
     signer: WpkhHotSigner,
     address_store: Arc<Mutex<AddressStore>>,
     tx_store: Arc<Mutex<TxStore>>,
@@ -52,6 +58,7 @@ impl CoinStore {
     ) -> Self {
         Self {
             store: BTreeMap::new(),
+            spk_to_outpoint: BTreeMap::new(),
             signer,
             address_store,
             tx_store,
@@ -176,7 +183,77 @@ impl CoinStore {
 
     // generate from tx_store
     pub fn generate(&mut self) {
-        // TODO:
+        // TODO: verify we cannot dead-lock there
+        let addr_store = self.address_store.lock().expect("poisoned");
+        let tx_store = self.tx_store.lock().expect("poisoned");
+
+        let mut coins = BTreeMap::<OutPoint, CoinEntry>::new();
+        // list all received coins
+        for (_, entry) in tx_store.inner() {
+            let tx = entry.tx();
+            let txid = tx.compute_txid();
+            for (vout, txout) in tx.output.iter().enumerate() {
+                if let Some(addr) = addr_store.get_entry(&txout.script_pubkey) {
+                    let txout = txout.clone();
+                    let outpoint = OutPoint {
+                        txid,
+                        vout: vout as u32,
+                    };
+                    let height = entry.height();
+                    let status = if height.is_some() {
+                        CoinStatus::Confirmed
+                    } else {
+                        CoinStatus::Unconfirmed
+                    };
+                    let coin = signer::Coin {
+                        txout,
+                        outpoint,
+                        // sequence is registered at spend time
+                        // so fill with dummy value
+                        sequence: bitcoin::Sequence::MAX,
+                        coin_path: signer::CoinPath {
+                            depth: addr.account_u32(),
+                            index: Some(addr.index()),
+                        },
+                    };
+                    let coin = CoinEntry {
+                        height: entry.height(),
+                        status,
+                        coin,
+                        address: addr.address(),
+                    };
+                    coins.insert(outpoint, coin);
+                }
+            }
+        }
+        // list all spent coins
+        for tx_entry in tx_store.inner().values() {
+            for inp in &tx_entry.tx().input {
+                coins.entry(inp.previous_output).and_modify(|e| {
+                    e.status = CoinStatus::Spent;
+                });
+            }
+        }
+        let mut spk_to_outpoint = BTreeMap::<ScriptBuf, HashSet<OutPoint>>::new();
+        coins.iter().for_each(|(op, ce)| {
+            spk_to_outpoint
+                .entry(ce.spk())
+                .and_modify(|e| {
+                    e.insert(*op);
+                })
+                .or_insert({
+                    let mut h = HashSet::new();
+                    h.insert(*op);
+                    h
+                });
+        });
+
+        self.store = coins;
+        self.spk_to_outpoint = spk_to_outpoint;
+
+        // TODO: update addres_store satuses (Unused/Used/AddressReused)
+
+        // FIXME: update statuses of those w/ CoinStatus::BeeingSpent
     }
 
     // Call by C++
@@ -207,7 +284,7 @@ impl CoinStore {
             .into_iter()
             .filter_map(|(_, coin)| match coin.status {
                 CoinStatus::Unconfirmed | CoinStatus::Confirmed => Some(Box::new(coin)),
-                CoinStatus::BeingSpend | CoinStatus::Spend => None,
+                CoinStatus::BeingSpend | CoinStatus::Spent => None,
                 _ => unreachable!(),
             })
             .collect();
@@ -250,19 +327,14 @@ impl Update {
     pub fn missing(&self) -> Vec<Txid> {
         self.txs
             .iter()
-            .filter_map(|(txid, tx, _)| {
-                if tx.is_none() {
-                    Some(txid.clone())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(txid, tx, _)| if tx.is_none() { Some(*txid) } else { None })
             .collect()
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoinEntry {
+    height: Option<u64>,
     status: CoinStatus,
     coin: signer::Coin,
     address: bitcoin::Address<NetworkUnchecked>,
@@ -292,5 +364,8 @@ impl CoinEntry {
     }
     pub fn address(&self) -> String {
         self.address.clone().assume_checked().to_string()
+    }
+    pub fn spk(&self) -> ScriptBuf {
+        self.address.clone().assume_checked().script_pubkey()
     }
 }

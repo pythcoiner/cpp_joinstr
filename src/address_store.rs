@@ -1,6 +1,5 @@
 use joinstr::{
-    electrum::CoinRequest,
-    miniscript::bitcoin::{self, address::NetworkUnchecked, OutPoint, ScriptBuf},
+    miniscript::bitcoin::{self, address::NetworkUnchecked, Script, ScriptBuf},
     signer::{self, WpkhHotSigner},
 };
 use serde::{Deserialize, Serialize};
@@ -93,7 +92,6 @@ impl AddressStore {
                 address,
                 account: Account::Receive,
                 index: i,
-                outpoints: BTreeSet::new(),
             };
             self.store.insert(script, entry);
         }
@@ -106,7 +104,6 @@ impl AddressStore {
                 address,
                 account: Account::Change,
                 index: i,
-                outpoints: BTreeSet::new(),
             };
             self.store.insert(script, entry);
         }
@@ -114,45 +111,8 @@ impl AddressStore {
         self.notify();
     }
 
-    pub fn insert_coin(&mut self, coin: signer::Coin) {
-        let path = coin.coin_path;
-        let addr = self.signer.address_at(&path).expect("coins have index");
-        let script = addr.clone().script_pubkey();
-        let account = match path.depth {
-            0 => Account::Receive,
-            1 => Account::Change,
-            _ => unreachable!(),
-        };
-        let index = path.index.expect("coin have index");
-        let outpoint = coin.outpoint;
-
-        match account {
-            Account::Receive => self.update_recv(index),
-            Account::Change => self.update_change(index),
-            _ => unreachable!(),
-        }
-
-        self.store
-            .entry(script)
-            .and_modify(|e| {
-                e.outpoints.insert(outpoint);
-                match e.outpoints.len() {
-                    0 => unreachable!(),
-                    1 => e.status == AddressStatus::Used,
-                    _ => e.status == AddressStatus::Reused,
-                };
-            })
-            .or_insert({
-                let mut outpoints = BTreeSet::new();
-                outpoints.insert(outpoint);
-                AddressEntry {
-                    status: AddressStatus::Used,
-                    address: addr.as_unchecked().clone(),
-                    account,
-                    index,
-                    outpoints,
-                }
-            });
+    pub fn get_entry(&self, spk: &Script) -> Option<AddressEntry> {
+        self.store.get(spk).cloned()
     }
 
     // Call by C++
@@ -218,7 +178,7 @@ pub struct AddressEntry {
     address: bitcoin::Address<NetworkUnchecked>,
     account: Account,
     index: u32,
-    outpoints: BTreeSet<OutPoint>,
+    // outpoints: BTreeSet<OutPoint>,
 }
 
 impl AddressEntry {
@@ -234,7 +194,17 @@ impl AddressEntry {
     pub fn account(&self) -> Account {
         self.account
     }
+    pub fn account_u32(&self) -> u32 {
+        match self.account {
+            Account::Receive => 0,
+            Account::Change => 1,
+            _ => unreachable!(),
+        }
+    }
     pub fn index(&self) -> u32 {
         self.index
+    }
+    pub fn address(&self) -> bitcoin::Address<NetworkUnchecked> {
+        self.address.clone()
     }
 }

@@ -16,6 +16,10 @@ impl TxStore {
         }
     }
 
+    pub fn inner(&self) -> &BTreeMap<Txid, TxEntry> {
+        &self.store
+    }
+
     pub fn apply_updates(&mut self, updates: Vec<Update>) {
         //
     }
