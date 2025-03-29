@@ -1,16 +1,16 @@
 use joinstr::{
-    miniscript::bitcoin::{self, address::NetworkUnchecked, OutPoint, ScriptBuf, TxOut, Txid},
-    signer::{self, WpkhHotSigner},
+    miniscript::bitcoin::{self, address::NetworkUnchecked, OutPoint, ScriptBuf, Txid},
+    signer::{self},
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{hash_set, BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     sync::{Arc, Mutex},
 };
 
 use crate::{
-    address_store::{AddressEntry, AddressStore},
-    cpp_joinstr::CoinStatus,
+    address_store::AddressStore,
+    cpp_joinstr::{AddressStatus, CoinStatus},
     tx_store::TxStore,
     Coins,
 };
@@ -22,7 +22,6 @@ pub struct CoinStore {
     // the tx store
     store: BTreeMap<OutPoint, CoinEntry>,
     spk_to_outpoint: BTreeMap<ScriptBuf, HashSet<OutPoint>>,
-    signer: WpkhHotSigner,
     address_store: Arc<Mutex<AddressStore>>,
     tx_store: Arc<Mutex<TxStore>>,
     spk_history: BTreeMap<ScriptBuf, SpkHistory>,
@@ -31,14 +30,14 @@ pub struct CoinStore {
 
 #[derive(Debug, Default)]
 pub struct SpkHistory {
-    history: Vec<Vec<(bitcoin::Txid, Option<u64>)>>,
+    history: Vec<BTreeMap<bitcoin::Txid, Option<u64>>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct HistoryDiff {
-    pub added: Vec<(bitcoin::Txid, Option<u64>)>,
-    pub changed: Vec<(bitcoin::Txid, Option<u64>)>,
-    pub removed: Vec<(bitcoin::Txid, Option<u64>)>,
+    pub added: BTreeMap<bitcoin::Txid, Option<u64>>,
+    pub changed: BTreeMap<bitcoin::Txid, Option<u64>>,
+    pub removed: BTreeMap<bitcoin::Txid, Option<u64>>,
 }
 
 impl SpkHistory {
@@ -46,20 +45,43 @@ impl SpkHistory {
         Self::default()
     }
     pub fn insert(&mut self, new: Vec<(bitcoin::Txid, Option<u64>)>) -> HistoryDiff {
-        todo!()
+        let new: BTreeMap<_, _> = new.into_iter().collect();
+        let diff = if self.history.is_empty() {
+            HistoryDiff {
+                added: new.clone(),
+                ..Default::default()
+            }
+        } else {
+            let mut diff = HistoryDiff::default();
+            let previous = self.history.last().expect("at least one element");
+
+            new.iter().for_each(|(txid, height)| {
+                if !previous.contains_key(txid) {
+                    diff.added.insert(*txid, *height);
+                } else {
+                    let prev_height = previous.get(txid).expect("present");
+                    if height != prev_height {
+                        diff.changed.insert(*txid, *height);
+                    }
+                }
+            });
+
+            previous.iter().for_each(|(txid, height)| {
+                if !new.contains_key(txid) {
+                    diff.removed.insert(*txid, *height);
+                }
+            });
+            diff
+        };
+        diff
     }
 }
 
 impl CoinStore {
-    pub fn new(
-        signer: WpkhHotSigner,
-        address_store: Arc<Mutex<AddressStore>>,
-        tx_store: Arc<Mutex<TxStore>>,
-    ) -> Self {
+    pub fn new(address_store: Arc<Mutex<AddressStore>>, tx_store: Arc<Mutex<TxStore>>) -> Self {
         Self {
             store: BTreeMap::new(),
             spk_to_outpoint: BTreeMap::new(),
-            signer,
             address_store,
             tx_store,
             updates: Vec::new(),
@@ -103,7 +125,7 @@ impl CoinStore {
                 .into_iter()
                 .filter_map(|u| {
                     if u.is_complete() {
-                        store.apply_updates(vec![u]);
+                        store.insert_updates(vec![u]);
                         None
                     } else {
                         Some(u)
@@ -136,7 +158,7 @@ impl CoinStore {
         {
             // drop tx in the tx_store & update heights
             let mut store = self.tx_store.lock().expect("poisoned");
-            for (txid, _) in &diff.removed {
+            for txid in diff.removed.keys() {
                 store.remove(txid);
             }
             for (txid, height) in &diff.changed {
@@ -168,7 +190,7 @@ impl CoinStore {
                 .into_iter()
                 .filter_map(|update| {
                     if update.is_complete() {
-                        store.apply_updates(vec![update]);
+                        store.insert_updates(vec![update]);
                         None
                     } else {
                         Some(update)
@@ -184,12 +206,12 @@ impl CoinStore {
     // generate from tx_store
     pub fn generate(&mut self) {
         // TODO: verify we cannot dead-lock there
-        let addr_store = self.address_store.lock().expect("poisoned");
+        let mut addr_store = self.address_store.lock().expect("poisoned");
         let tx_store = self.tx_store.lock().expect("poisoned");
 
         let mut coins = BTreeMap::<OutPoint, CoinEntry>::new();
         // list all received coins
-        for (_, entry) in tx_store.inner() {
+        for entry in tx_store.inner().values() {
             let tx = entry.tx();
             let txid = tx.compute_txid();
             for (vout, txout) in tx.output.iter().enumerate() {
@@ -251,7 +273,17 @@ impl CoinStore {
         self.store = coins;
         self.spk_to_outpoint = spk_to_outpoint;
 
-        // TODO: update addres_store satuses (Unused/Used/AddressReused)
+        // update address_store statuses
+        self.spk_to_outpoint.iter().for_each(|(spk, op)| {
+            let status = match op.len() {
+                0 => AddressStatus::NotUsed,
+                1 => AddressStatus::Used,
+                _ => AddressStatus::Reused,
+            };
+            if let Some(e) = addr_store.get_entry_mut(spk) {
+                e.set_status(status)
+            }
+        });
 
         // FIXME: update statuses of those w/ CoinStatus::BeeingSpent
     }
@@ -304,8 +336,9 @@ impl CoinStore {
 
 #[derive(Debug, Clone)]
 pub struct Update {
+    #[allow(unused)]
     spk: ScriptBuf,
-    txs: Vec<(bitcoin::Txid, Option<bitcoin::Transaction>, Option<u64>)>,
+    pub txs: Vec<(bitcoin::Txid, Option<bitcoin::Transaction>, Option<u64>)>,
 }
 
 impl Update {

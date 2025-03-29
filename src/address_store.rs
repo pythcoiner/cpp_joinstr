@@ -1,12 +1,9 @@
 use joinstr::{
     miniscript::bitcoin::{self, address::NetworkUnchecked, Script, ScriptBuf},
-    signer::{self, WpkhHotSigner},
+    signer::WpkhHotSigner,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::mpsc,
-};
+use std::{collections::BTreeMap, sync::mpsc};
 
 use crate::{
     cpp_joinstr::{Account, AddressStatus},
@@ -30,6 +27,7 @@ pub struct AddressStore {
     signer: WpkhHotSigner,
     notification: mpsc::Sender<Notification>,
     tx_poller: Option<mpsc::Sender<AddressTip>>,
+    look_ahead: u32,
 }
 
 impl AddressStore {
@@ -38,8 +36,9 @@ impl AddressStore {
         notification: mpsc::Sender<Notification>,
         recv_tip: u32,
         change_tip: u32,
+        look_ahead: u32,
     ) -> Self {
-        let store = Self {
+        Self {
             store: BTreeMap::new(),
             recv_received_tip: 0,
             change_received_tip: 0,
@@ -48,8 +47,8 @@ impl AddressStore {
             signer,
             notification,
             tx_poller: None,
-        };
-        store
+            look_ahead,
+        }
     }
 
     fn notify(&self) {
@@ -57,8 +56,8 @@ impl AddressStore {
             .send(Notification::AddressTipChanged)
             .unwrap();
         if let Some(tx_poller) = &self.tx_poller {
-            let recv = self.recv_generated_tip;
-            let change = self.change_generated_tip;
+            let recv = self.recv_generated_tip + self.look_ahead;
+            let change = self.change_generated_tip + self.look_ahead;
             tx_poller.send(AddressTip { recv, change }).unwrap();
         }
     }
@@ -113,6 +112,10 @@ impl AddressStore {
 
     pub fn get_entry(&self, spk: &Script) -> Option<AddressEntry> {
         self.store.get(spk).cloned()
+    }
+
+    pub fn get_entry_mut(&mut self, spk: &Script) -> Option<&mut AddressEntry> {
+        self.store.get_mut(spk)
     }
 
     // Call by C++
@@ -184,6 +187,9 @@ pub struct AddressEntry {
 impl AddressEntry {
     pub fn script(&self) -> ScriptBuf {
         self.address.clone().assume_checked().script_pubkey()
+    }
+    pub fn set_status(&mut self, status: AddressStatus) {
+        self.status = status;
     }
     pub fn status(&self) -> AddressStatus {
         self.status

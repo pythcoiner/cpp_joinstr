@@ -93,8 +93,6 @@ pub struct Wallet {
     signal_sender: mpsc::Sender<Signal>,
     receiver: mpsc::Receiver<Notification>,
     sender: mpsc::Sender<Notification>,
-    electrum_channel: Option<mpsc::Sender<CoinPollerMsg>>,
-    pool_listener_channel: Option<mpsc::Sender<PoolPollerMsg>>,
     signer: WpkhHotSigner,
     coin_poller: Option<JoinHandle<()>>,
     pool_poller: Option<JoinHandle<()>>,
@@ -113,6 +111,7 @@ impl Wallet {
         electrum_port: u16,
         nostr_relay: String,
         back: u64,
+        look_ahead: u32,
     ) -> Self {
         let (signal_sender, signals) = mpsc::channel();
         let (sender, receiver) = mpsc::channel();
@@ -122,12 +121,12 @@ impl Wallet {
         let address_store = Arc::new(Mutex::new(AddressStore::new(
             signer.clone(),
             sender.clone(),
-            20,
-            20,
+            0,
+            0,
+            look_ahead,
         )));
         let tx_store = Arc::new(Mutex::new(TxStore::new()));
         let coin_store = Arc::new(Mutex::new(CoinStore::new(
-            signer.clone(),
             address_store.clone(),
             tx_store.clone(),
         )));
@@ -148,8 +147,6 @@ impl Wallet {
             network,
             receiver,
             sender,
-            electrum_channel: None,
-            pool_listener_channel: None,
         };
         let tx_poller = wallet.start_poll_txs();
         wallet.start_poll_pools(back);
@@ -170,21 +167,12 @@ impl Wallet {
         println!("Wallet::start_poll_txs()");
         let (sender, address_tip) = mpsc::channel();
         let coin_store = self.coin_store.clone();
-        let tx_store = self.tx_store.clone();
         let notification = self.sender.clone();
         let signer = self.signer.clone();
         let addr = self.electrum_url.clone();
         let port = self.electrum_port;
         let poller = thread::spawn(move || {
-            tx_poller(
-                addr,
-                port,
-                coin_store,
-                tx_store,
-                signer,
-                notification,
-                address_tip,
-            );
+            tx_poller(addr, port, coin_store, signer, notification, address_tip);
         });
         self.coin_poller = Some(poller);
         sender
@@ -287,19 +275,27 @@ pub fn new_wallet(
     relay: String,
     back: u64,
 ) -> Box<Wallet> {
-    Wallet::new((*mnemonic).into(), network.into(), addr, port, relay, back).boxed()
+    Wallet::new(
+        (*mnemonic).into(),
+        network.into(),
+        addr,
+        port,
+        relay,
+        back,
+        100,
+    )
+    .boxed()
 }
 
 fn tx_poller<T: From<CoinPollerMsg>>(
     addr: String,
     port: u16,
     coin_store: Arc<Mutex<CoinStore>>,
-    tx_store: Arc<Mutex<TxStore>>,
     signer: WpkhHotSigner,
     notification: mpsc::Sender<T>,
     address_tip: mpsc::Receiver<AddressTip>,
 ) {
-    let mut client = match joinstr::electrum::Client::new(&addr, port) {
+    let client = match joinstr::electrum::Client::new(&addr, port) {
         Ok(c) => c,
         Err(e) => {
             println!("wallet_poll(): fail to create electrum client {}", e);
@@ -361,7 +357,7 @@ fn tx_poller<T: From<CoinPollerMsg>>(
             },
         }
 
-        // TODO: listen for response
+        // listen for response
         match response.try_recv() {
             Ok(rsp) => {
                 received = true;
@@ -381,10 +377,12 @@ fn tx_poller<T: From<CoinPollerMsg>>(
                         request.send(CoinRequest::History(history)).unwrap();
                     }
                     CoinResponse::History(map) => {
-                        // TODO:
+                        let mut store = coin_store.lock().expect("poisoned");
+                        store.handle_history_response(map);
                     }
-                    CoinResponse::Txs(items) => {
-                        // TODO:
+                    CoinResponse::Txs(txs) => {
+                        let mut store = coin_store.lock().expect("poisoned");
+                        store.handle_txs_response(txs);
                     }
                     CoinResponse::Stopped => {
                         notification.send(CoinPollerMsg::Stopped.into()).unwrap();

@@ -20,8 +20,22 @@ impl TxStore {
         &self.store
     }
 
-    pub fn apply_updates(&mut self, updates: Vec<Update>) {
-        //
+    pub fn insert_updates(&mut self, updates: Vec<Update>) {
+        // sanitize, all Txs must Some(_)
+        updates.iter().for_each(|u| {
+            assert!(u.is_complete());
+        });
+
+        for upd in updates {
+            for (txid, tx, height) in upd.txs {
+                let entry = TxEntry {
+                    height,
+                    tx: tx.expect("all txs populated"),
+                    merkle: Default::default(),
+                };
+                self.store.insert(txid, entry);
+            }
+        }
     }
 
     pub fn update(&mut self, entry: TxEntry) {
