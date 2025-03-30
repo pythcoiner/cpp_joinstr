@@ -299,7 +299,8 @@ impl Display for SignalFlag {
             SignalFlag::AddressTipChanged => write!(f, "AddressTipChanged"),
             SignalFlag::CoinUpdate => write!(f, "CoinUpdate"),
             SignalFlag::AccountError => write!(f, "AccountError"),
-            _ => unreachable!(),
+            SignalFlag::PoolUpdate => write!(f, "PoolUpdate"),
+            _ => write!(f, "unexpected SignalFlag"),
         }
     }
 }
