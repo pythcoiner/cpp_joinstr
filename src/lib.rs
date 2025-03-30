@@ -25,6 +25,7 @@ pub mod cpp_joinstr {
         TxListenerStopped,
         TxListenerError,
         PoolListenerStarted,
+        PoolUpdate,
         PoolListenerStopped,
         PoolListenerError,
         AddressTipChanged,

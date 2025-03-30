@@ -103,7 +103,8 @@ impl Notification {
                 TxListenerNotif::Stopped => signal.set(SignalFlag::TxListenerStopped),
             },
             Notification::Joinstr(notif) => match notif {
-                PoolListenerNotif::Started(_) => signal.set(SignalFlag::PoolListenerStarted),
+                PoolListenerNotif::Started => signal.set(SignalFlag::PoolListenerStarted),
+                PoolListenerNotif::PoolUpdate => signal.set(SignalFlag::PoolUpdate),
                 PoolListenerNotif::Stopped => signal.set(SignalFlag::PoolListenerStopped),
                 PoolListenerNotif::Error(e) => {
                     signal.set(SignalFlag::PoolListenerError);
@@ -138,7 +139,8 @@ pub enum TxListenerNotif {
 
 #[derive(Debug)]
 pub enum PoolListenerNotif {
-    Started(mpsc::Sender<PoolListenerNotif>),
+    Started,
+    PoolUpdate,
     Stopped,
     Stop,
     Error(Error),
@@ -246,7 +248,7 @@ impl Account {
         let sender = self.sender.clone();
 
         let poller = thread::spawn(move || {
-            pool_poller(relay, pool_store, sender, back);
+            pool_listener(relay, pool_store, sender, back);
         });
         self.pool_poller = Some(poller);
     }
@@ -525,7 +527,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
     }
 }
 
-fn pool_poller<N: From<PoolListenerNotif> + Send + 'static>(
+fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
     relay: String,
     pool_store: Arc<Mutex<PoolStore>>,
     sender: mpsc::Sender<N>,
@@ -537,13 +539,17 @@ fn pool_poller<N: From<PoolListenerNotif> + Send + 'static>(
         .keys(Keys::generate())
         .unwrap();
     if let Err(e) = pool_listener.connect_nostr() {
+        log::error!("pool_listener() fail to connect to nostr relay: {e:?}");
         let msg: PoolListenerNotif = e.into();
         sender.send(msg.into()).unwrap();
     }
     if let Err(e) = pool_listener.subscribe_pools(back) {
+        log::error!("pool_listener() fail to subscribe to pool notifications: {e:?}");
         let msg: PoolListenerNotif = e.into();
         sender.send(msg.into()).unwrap();
     }
+
+    // TODO: implement remote stop
 
     loop {
         let pool = match pool_listener.receive_pool_notification() {
@@ -554,7 +560,7 @@ fn pool_poller<N: From<PoolListenerNotif> + Send + 'static>(
             }
             Err(e) => match e {
                 error::Error::Disconnected | error::Error::NotConnected => {
-                    println!("pool_poller() connexion lost: {e:?}");
+                    log::error!("pool_listener() connexion lost: {e:?}");
                     // connexion lost try to reconnect
                     pool_listener = NostrClient::new("pool_listener")
                         .relay(relay.clone())
@@ -562,10 +568,14 @@ fn pool_poller<N: From<PoolListenerNotif> + Send + 'static>(
                         .keys(Keys::generate())
                         .unwrap();
                     if let Err(e) = pool_listener.connect_nostr() {
+                        log::error!("pool_listener() fail to reconnect: {e:?}");
                         let msg: PoolListenerNotif = e.into();
                         sender.send(msg.into()).unwrap();
                     }
                     if let Err(e) = pool_listener.subscribe_pools(back) {
+                        log::error!(
+                            "pool_listener() fail to subscribe to pool notifications: {e:?}"
+                        );
                         let msg: PoolListenerNotif = e.into();
                         sender.send(msg.into()).unwrap();
                     }
@@ -573,7 +583,7 @@ fn pool_poller<N: From<PoolListenerNotif> + Send + 'static>(
                     continue;
                 }
                 e => {
-                    println!("pool_poller(): {:?}", e);
+                    log::error!("pool_listener() unexpected error: {e:?}");
                     let msg: PoolListenerNotif = e.into();
                     sender.send(msg.into()).unwrap();
                     return;
@@ -583,6 +593,7 @@ fn pool_poller<N: From<PoolListenerNotif> + Send + 'static>(
         {
             let mut store = pool_store.lock().expect("poisoned");
             store.update(pool, PoolStatus::Available);
+            sender.send(PoolListenerNotif::PoolUpdate.into()).unwrap();
         } // release store lock
     }
 }
