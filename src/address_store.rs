@@ -138,6 +138,10 @@ impl AddressStore {
         self.recv_generated_tip + self.look_ahead + 1
     }
 
+    pub fn recv_tip(&self) -> u32 {
+        self.recv_generated_tip
+    }
+
     pub fn init(&mut self, tx_poller: mpsc::Sender<AddressTip>) {
         self.populate_maybe();
         self.tx_poller = Some(tx_poller);
@@ -211,11 +215,10 @@ impl AddressStore {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddressEntry {
-    status: AddressStatus,
-    address: bitcoin::Address<NetworkUnchecked>,
-    account: AddrAccount,
-    index: u32,
-    // outpoints: BTreeSet<OutPoint>,
+    pub status: AddressStatus,
+    pub address: bitcoin::Address<NetworkUnchecked>,
+    pub account: AddrAccount,
+    pub index: u32,
 }
 
 impl AddressEntry {

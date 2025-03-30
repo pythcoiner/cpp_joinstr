@@ -133,6 +133,10 @@ impl CoinStore {
         self.address_store.new_recv_addr()
     }
 
+    pub fn recv_tip(&self) -> u32 {
+        self.address_store.recv_tip()
+    }
+
     pub fn new_change_addr(&mut self) -> bitcoin::Address {
         self.address_store.new_change_addr()
     }

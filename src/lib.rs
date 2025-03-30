@@ -134,7 +134,7 @@ pub mod cpp_joinstr {
 
     extern "Rust" {
         #[rust_name = AddressEntry]
-        type Address;
+        type RustAddress;
         fn status(&self) -> AddressStatus;
         fn value(&self) -> String;
         fn account(&self) -> AddrAccount;
@@ -191,6 +191,7 @@ pub mod cpp_joinstr {
         fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32);
         fn try_recv(&mut self) -> Box<Poll>;
         fn relay(&self) -> String;
+        fn new_addr(&mut self) -> Box<AddressEntry>;
 
         fn new_wallet(
             mnemonic: Box<Mnemonic>,

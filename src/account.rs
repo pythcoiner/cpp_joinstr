@@ -15,9 +15,9 @@ use joinstr::{
 };
 
 use crate::{
-    address_store::AddressTip,
+    address_store::{AddressEntry, AddressTip},
     coin_store::{CoinEntry, CoinStore},
-    cpp_joinstr::{Network, PoolStatus, SignalFlag},
+    cpp_joinstr::{AddrAccount, AddressStatus, Network, PoolStatus, SignalFlag},
     pool_store::PoolStore,
     result, Coins, Mnemonic, Pool, Pools,
 };
@@ -243,6 +243,37 @@ impl Account {
     pub fn coins(&self) -> BTreeMap<OutPoint, CoinEntry> {
         self.coin_store.lock().expect("poisoned").coins()
     }
+
+    pub fn recv_at(&self, index: u32) -> bitcoin::Address {
+        self.coin_store
+            .lock()
+            .expect("poisoned")
+            .signer_ref()
+            .recv_addr_at(index)
+    }
+
+    pub fn change_at(&self, index: u32) -> bitcoin::Address {
+        self.coin_store
+            .lock()
+            .expect("poisoned")
+            .signer_ref()
+            .change_addr_at(index)
+    }
+
+    pub fn new_recv_addr(&mut self) -> bitcoin::Address {
+        self.coin_store.lock().expect("poisoned").new_recv_addr()
+    }
+    pub fn new_change_addr(&mut self) -> bitcoin::Address {
+        self.coin_store.lock().expect("poisoned").new_change_addr()
+    }
+
+    pub fn recv_watch_tip(&self) -> u32 {
+        self.coin_store.lock().expect("poisoned").recv_watch_tip()
+    }
+
+    pub fn change_watch_tip(&self) -> u32 {
+        self.coin_store.lock().expect("poisoned").change_watch_tip()
+    }
 }
 
 // C++ shared interface
@@ -311,14 +342,6 @@ impl Account {
             .to_string()
     }
 
-    pub fn recv_at(&self, index: u32) -> bitcoin::Address {
-        self.coin_store
-            .lock()
-            .expect("poisoned")
-            .signer_ref()
-            .recv_addr_at(index)
-    }
-
     pub fn change_addr_at(&self, index: u32) -> String {
         self.coin_store
             .lock()
@@ -328,27 +351,15 @@ impl Account {
             .to_string()
     }
 
-    pub fn change_at(&self, index: u32) -> bitcoin::Address {
-        self.coin_store
-            .lock()
-            .expect("poisoned")
-            .signer_ref()
-            .change_addr_at(index)
-    }
-
-    pub fn new_recv_addr(&mut self) -> bitcoin::Address {
-        self.coin_store.lock().expect("poisoned").new_recv_addr()
-    }
-    pub fn new_change_addr(&mut self) -> bitcoin::Address {
-        self.coin_store.lock().expect("poisoned").new_change_addr()
-    }
-
-    pub fn recv_watch_tip(&self) -> u32 {
-        self.coin_store.lock().expect("poisoned").recv_watch_tip()
-    }
-
-    pub fn change_watch_tip(&self) -> u32 {
-        self.coin_store.lock().expect("poisoned").change_watch_tip()
+    pub fn new_addr(&mut self) -> Box<AddressEntry> {
+        let addr = self.new_recv_addr();
+        let index = self.coin_store.lock().expect("poisoned").recv_tip();
+        Box::new(AddressEntry {
+            status: AddressStatus::NotUsed,
+            address: addr.as_unchecked().clone(),
+            account: AddrAccount::Receive,
+            index,
+        })
     }
 
     pub fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32) {
