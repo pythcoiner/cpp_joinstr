@@ -21,9 +21,15 @@ pub mod cpp_joinstr {
 
     #[derive(Debug, Clone)]
     pub enum SignalFlag {
-        UpdateCoins,
-        UpdateWallet,
-        Error,
+        TxListenerStarted,
+        TxListenerStopped,
+        TxListenerError,
+        PoolListenerStarted,
+        PoolListenerStopped,
+        PoolListenerError,
+        AddressTipChanged,
+        CoinUpdate,
+        AccountError,
     }
 
     extern "Rust" {
@@ -283,10 +289,16 @@ impl Txid {
 impl Display for SignalFlag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
-            SignalFlag::Error => write!(f, "Error"),
-            SignalFlag::UpdateCoins => write!(f, "UpdateCoins"),
-            SignalFlag::UpdateWallet => write!(f, "UpdateWallet"),
-            _ => panic!(),
+            SignalFlag::TxListenerStarted => write!(f, "TxListenerStarted"),
+            SignalFlag::TxListenerStopped => write!(f, "TxListenerStopped"),
+            SignalFlag::TxListenerError => write!(f, "TxListenerError"),
+            SignalFlag::PoolListenerStarted => write!(f, "PoolListenerStarted"),
+            SignalFlag::PoolListenerStopped => write!(f, "PoolListenerStopped"),
+            SignalFlag::PoolListenerError => write!(f, "PoolListenerError"),
+            SignalFlag::AddressTipChanged => write!(f, "AddressTipChanged"),
+            SignalFlag::CoinUpdate => write!(f, "CoinUpdate"),
+            SignalFlag::AccountError => write!(f, "AccountError"),
+            _ => unreachable!(),
         }
     }
 }

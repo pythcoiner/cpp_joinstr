@@ -10,14 +10,14 @@ use joinstr::{
     electrum::{CoinRequest, CoinResponse},
     miniscript::bitcoin::{self, OutPoint, ScriptBuf},
     nostr::{self, error, sync::NostrClient},
-    signer::{self, WpkhHotSigner},
+    signer::WpkhHotSigner,
     simple_nostr_client::nostr::key::Keys,
 };
 
 use crate::{
     address_store::{AddressStore, AddressTip},
     coin_store::{CoinEntry, CoinStore},
-    cpp_joinstr::{CoinStatus, Network, PoolStatus, SignalFlag},
+    cpp_joinstr::{Network, PoolStatus, SignalFlag},
     pool_store::PoolStore,
     result,
     tx_store::TxStore,
@@ -26,24 +26,95 @@ use crate::{
 
 result!(Poll, Signal);
 
-result!(Signal, SignalFlag);
+#[derive(Default, Clone)]
+pub struct Signal {
+    inner: Option<SignalFlag>,
+    error: Option<String>,
+}
+impl Signal {
+    pub fn new() -> Self {
+        Self {
+            inner: None,
+            error: None,
+        }
+    }
+    pub fn set(&mut self, value: SignalFlag) {
+        self.inner = Some(value);
+        self.error = None;
+    }
+    pub fn set_error(&mut self, error: String) {
+        self.error = Some(error);
+        self.inner = None;
+    }
+    pub fn unwrap(&self) -> SignalFlag {
+        self.inner.unwrap()
+    }
+    pub fn boxed(&self) -> Box<SignalFlag> {
+        Box::new(self.inner.unwrap())
+    }
+    pub fn error(&self) -> String {
+        self.error.clone().unwrap_or_default()
+    }
+    pub fn is_ok(&self) -> bool {
+        self.inner.is_some() && self.error.is_none()
+    }
+    pub fn is_err(&self) -> bool {
+        let err = matches!(
+            self.inner,
+            Some(SignalFlag::TxListenerError)
+                | Some(SignalFlag::PoolListenerError)
+                | Some(SignalFlag::AccountError)
+                | None
+        );
+        err && self.error.is_some()
+    }
+}
 
 #[derive(Debug)]
 pub enum Notification {
-    Electrum(CoinPollerMsg),
-    Joinstr(PoolPollerMsg),
+    Electrum(TxListenerNotif),
+    Joinstr(PoolListenerNotif),
     AddressTipChanged,
+    CoinUpdate,
 }
 
-impl From<CoinPollerMsg> for Notification {
-    fn from(value: CoinPollerMsg) -> Self {
+impl From<TxListenerNotif> for Notification {
+    fn from(value: TxListenerNotif) -> Self {
         Notification::Electrum(value)
     }
 }
 
-impl From<PoolPollerMsg> for Notification {
-    fn from(value: PoolPollerMsg) -> Self {
+impl From<PoolListenerNotif> for Notification {
+    fn from(value: PoolListenerNotif) -> Self {
         Notification::Joinstr(value)
+    }
+}
+
+impl Notification {
+    pub fn to_signal(self) -> Signal {
+        let mut signal = Signal::new();
+        match self {
+            Notification::Electrum(notif) => match notif {
+                TxListenerNotif::Started => signal.set(SignalFlag::TxListenerStarted),
+                TxListenerNotif::Error(e) => {
+                    signal.set(SignalFlag::TxListenerError);
+                    signal.set_error(e);
+                }
+                TxListenerNotif::Stopped => signal.set(SignalFlag::TxListenerStopped),
+            },
+            Notification::Joinstr(notif) => match notif {
+                PoolListenerNotif::Started(_) => signal.set(SignalFlag::PoolListenerStarted),
+                PoolListenerNotif::Stopped => signal.set(SignalFlag::PoolListenerStopped),
+                PoolListenerNotif::Error(e) => {
+                    signal.set(SignalFlag::PoolListenerError);
+                    signal.set_error(format!("{e:?}"));
+                }
+                PoolListenerNotif::Stop => unreachable!(),
+            },
+            Notification::AddressTipChanged => signal.set(SignalFlag::AddressTipChanged),
+            Notification::CoinUpdate => signal.set(SignalFlag::CoinUpdate),
+        }
+        signal
     }
 }
 
@@ -59,27 +130,23 @@ impl From<nostr::error::Error> for Error {
 }
 
 #[derive(Debug, Clone)]
-pub enum CoinPollerMsg {
-    CoinUpdate {
-        coin: signer::Coin,
-        status: CoinStatus,
-    },
-    Started(mpsc::Sender<PoolPollerMsg>),
-    Stop,
+pub enum TxListenerNotif {
+    Started,
     Error(String),
     Stopped,
 }
 
 #[derive(Debug)]
-pub enum PoolPollerMsg {
-    Started(mpsc::Sender<PoolPollerMsg>),
+pub enum PoolListenerNotif {
+    Started(mpsc::Sender<PoolListenerNotif>),
+    Stopped,
     Stop,
     Error(Error),
 }
 
-impl From<nostr::error::Error> for PoolPollerMsg {
+impl From<nostr::error::Error> for PoolListenerNotif {
     fn from(value: nostr::error::Error) -> Self {
-        PoolPollerMsg::Error(Error::Nostr(value))
+        PoolListenerNotif::Error(Error::Nostr(value))
     }
 }
 
@@ -88,8 +155,6 @@ pub struct Account {
     coin_store: Arc<Mutex<CoinStore>>,
     pool_store: Arc<Mutex<PoolStore>>,
     address_store: Arc<Mutex<AddressStore>>,
-    signals: mpsc::Receiver<Signal>,
-    signal_sender: mpsc::Sender<Signal>,
     receiver: mpsc::Receiver<Notification>,
     sender: mpsc::Sender<Notification>,
     signer: WpkhHotSigner,
@@ -112,7 +177,6 @@ impl Account {
         back: u64,
         look_ahead: u32,
     ) -> Self {
-        let (signal_sender, signals) = mpsc::channel();
         let (sender, receiver) = mpsc::channel();
         // TODO: import saved state from local storage
         let signer = WpkhHotSigner::new_from_mnemonics(network, &mnemonic.to_string())
@@ -134,8 +198,6 @@ impl Account {
             coin_store,
             pool_store: Default::default(),
             address_store,
-            signals,
-            signal_sender,
             signer,
             coin_poller: None,
             pool_poller: None,
@@ -146,7 +208,7 @@ impl Account {
             receiver,
             sender,
         };
-        let tx_poller = wallet.start_poll_txs();
+        let tx_poller = wallet.start_listen_txs();
         if let Some(relay) = wallet.nostr_relay.as_ref() {
             wallet.start_poll_pools(back, relay.clone());
         }
@@ -163,7 +225,7 @@ impl Account {
         Box::new(self)
     }
 
-    fn start_poll_txs(&mut self) -> mpsc::Sender<AddressTip> {
+    fn start_listen_txs(&mut self) -> mpsc::Sender<AddressTip> {
         log::debug!("Account::start_poll_txs()");
         let (sender, address_tip) = mpsc::channel();
         let coin_store = self.coin_store.clone();
@@ -172,7 +234,7 @@ impl Account {
         let addr = self.electrum_url.clone();
         let port = self.electrum_port;
         let poller = thread::spawn(move || {
-            tx_poller(addr, port, coin_store, signer, notification, address_tip);
+            listen_txs(addr, port, coin_store, signer, notification, address_tip);
         });
         self.coin_poller = Some(poller);
         sender
@@ -239,8 +301,10 @@ impl Account {
 
     pub fn try_recv(&mut self) -> Box<Poll> {
         let mut poll = Poll::new();
-        match self.signals.try_recv() {
-            Ok(signal) => poll.set(signal),
+        match self.receiver.try_recv() {
+            Ok(notif) => {
+                poll.set(notif.to_signal());
+            }
             Err(e) => match e {
                 mpsc::TryRecvError::Disconnected => poll.set_error("Disconnected".to_string()),
                 mpsc::TryRecvError::Empty => {}
@@ -316,7 +380,7 @@ pub fn new_wallet(
     .boxed()
 }
 
-fn tx_poller<T: From<CoinPollerMsg>>(
+fn listen_txs<T: From<TxListenerNotif>>(
     addr: String,
     port: u16,
     coin_store: Arc<Mutex<CoinStore>>,
@@ -327,9 +391,10 @@ fn tx_poller<T: From<CoinPollerMsg>>(
     let client = match joinstr::electrum::Client::new(&addr, port) {
         Ok(c) => c,
         Err(e) => {
-            log::error!("wallet_poll(): fail to create electrum client {}", e);
+            log::error!("listen_txs(): fail to create electrum client {}", e);
             notification
-                .send(CoinPollerMsg::Error(e.to_string()).into())
+                .send(TxListenerNotif::Error(e.to_string()).into())
+                // TODO: do not unwrap
                 .unwrap();
             return;
         }
@@ -341,6 +406,12 @@ fn tx_poller<T: From<CoinPollerMsg>>(
     let mut statuses = BTreeMap::<ScriptBuf, Option<String>>::new();
 
     let (request, response) = client.listen::<CoinRequest, CoinResponse>();
+
+    log::info!("listen_txs(): started");
+    notification
+        .send(TxListenerNotif::Started.into())
+        // TODO: do not unwrap
+        .unwrap();
 
     loop {
         let mut received = false;
@@ -381,6 +452,11 @@ fn tx_poller<T: From<CoinPollerMsg>>(
             Err(e) => match e {
                 mpsc::TryRecvError::Empty => {}
                 mpsc::TryRecvError::Disconnected => {
+                    log::error!("listen_txs(): address store disconnected");
+                    notification
+                        .send(TxListenerNotif::Error("AddressStore disconnected".into()).into())
+                        // TODO: do not unwrap
+                        .unwrap();
                     // FIXME: what should we do there?
                     // it's AddressStore being dropped, but she should keep upating
                     // the actual spk set even if it cannot grow anymore
@@ -420,12 +496,12 @@ fn tx_poller<T: From<CoinPollerMsg>>(
                         store.handle_txs_response(txs);
                     }
                     CoinResponse::Stopped => {
-                        notification.send(CoinPollerMsg::Stopped.into()).unwrap();
+                        notification.send(TxListenerNotif::Stopped.into()).unwrap();
                         return;
                     }
                     CoinResponse::Error(e) => {
                         // TODO: do not unwrap
-                        notification.send(CoinPollerMsg::Error(e).into()).unwrap();
+                        notification.send(TxListenerNotif::Error(e).into()).unwrap();
                     }
                 }
             }
@@ -434,7 +510,8 @@ fn tx_poller<T: From<CoinPollerMsg>>(
                 mpsc::TryRecvError::Disconnected => {
                     // NOTE: here the electrum client is dropped, we cannot continue
                     // TODO: do not unwrap
-                    notification.send(CoinPollerMsg::Stopped.into()).unwrap();
+                    log::error!("listen_txs() electrum client stopped unexpectedly");
+                    notification.send(TxListenerNotif::Stopped.into()).unwrap();
                     return;
                 }
             },
@@ -448,7 +525,7 @@ fn tx_poller<T: From<CoinPollerMsg>>(
     }
 }
 
-fn pool_poller<N: From<PoolPollerMsg> + Send + 'static>(
+fn pool_poller<N: From<PoolListenerNotif> + Send + 'static>(
     relay: String,
     pool_store: Arc<Mutex<PoolStore>>,
     sender: mpsc::Sender<N>,
@@ -460,11 +537,11 @@ fn pool_poller<N: From<PoolPollerMsg> + Send + 'static>(
         .keys(Keys::generate())
         .unwrap();
     if let Err(e) = pool_listener.connect_nostr() {
-        let msg: PoolPollerMsg = e.into();
+        let msg: PoolListenerNotif = e.into();
         sender.send(msg.into()).unwrap();
     }
     if let Err(e) = pool_listener.subscribe_pools(back) {
-        let msg: PoolPollerMsg = e.into();
+        let msg: PoolListenerNotif = e.into();
         sender.send(msg.into()).unwrap();
     }
 
@@ -485,11 +562,11 @@ fn pool_poller<N: From<PoolPollerMsg> + Send + 'static>(
                         .keys(Keys::generate())
                         .unwrap();
                     if let Err(e) = pool_listener.connect_nostr() {
-                        let msg: PoolPollerMsg = e.into();
+                        let msg: PoolListenerNotif = e.into();
                         sender.send(msg.into()).unwrap();
                     }
                     if let Err(e) = pool_listener.subscribe_pools(back) {
-                        let msg: PoolPollerMsg = e.into();
+                        let msg: PoolListenerNotif = e.into();
                         sender.send(msg.into()).unwrap();
                     }
                     thread::sleep(Duration::from_millis(50));
@@ -497,7 +574,7 @@ fn pool_poller<N: From<PoolPollerMsg> + Send + 'static>(
                 }
                 e => {
                     println!("pool_poller(): {:?}", e);
-                    let msg: PoolPollerMsg = e.into();
+                    let msg: PoolListenerNotif = e.into();
                     sender.send(msg.into()).unwrap();
                     return;
                 }
