@@ -29,6 +29,7 @@ pub struct CoinStore {
     spk_history: BTreeMap<ScriptBuf, SpkHistory>,
     updates: Vec<Update>,
     signer: WpkhHotSigner,
+    notification: mpsc::Sender<Notification>,
 }
 
 #[derive(Debug, Default)]
@@ -94,7 +95,7 @@ impl CoinStore {
             .expect("valid mnemonic");
         let address_store = AddressStore::new(
             signer.clone(),
-            notification,
+            notification.clone(),
             recv_tip,
             change_tip,
             look_ahead,
@@ -107,6 +108,7 @@ impl CoinStore {
             updates: Vec::new(),
             spk_history: BTreeMap::new(),
             signer,
+            notification,
         }
     }
 
@@ -338,6 +340,9 @@ impl CoinStore {
         });
 
         // FIXME: update statuses of those w/ CoinStatus::BeeingSpent
+
+        // TODO: do not unwrap
+        self.notification.send(Notification::CoinUpdate).unwrap();
     }
 
     // Call by C++
