@@ -1,15 +1,17 @@
 use joinstr::{
+    bip39,
     miniscript::bitcoin::{self, address::NetworkUnchecked, OutPoint, ScriptBuf, Txid},
-    signer::{self},
+    signer::{self, WpkhHotSigner},
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::mpsc,
 };
 
 use crate::{
-    address_store::AddressStore,
+    account::Notification,
+    address_store::{AddressStore, AddressTip},
     cpp_joinstr::{AddressStatus, CoinStatus},
     tx_store::TxStore,
     Coins,
@@ -22,10 +24,11 @@ pub struct CoinStore {
     // the tx store
     store: BTreeMap<OutPoint, CoinEntry>,
     spk_to_outpoint: BTreeMap<ScriptBuf, HashSet<OutPoint>>,
-    address_store: Arc<Mutex<AddressStore>>,
-    tx_store: Arc<Mutex<TxStore>>,
+    address_store: AddressStore,
+    tx_store: TxStore,
     spk_history: BTreeMap<ScriptBuf, SpkHistory>,
     updates: Vec<Update>,
+    signer: WpkhHotSigner,
 }
 
 #[derive(Debug, Default)]
@@ -78,47 +81,62 @@ impl SpkHistory {
 }
 
 impl CoinStore {
-    pub fn new(address_store: Arc<Mutex<AddressStore>>, tx_store: Arc<Mutex<TxStore>>) -> Self {
+    pub fn new(
+        network: bitcoin::Network,
+        mnemonic: bip39::Mnemonic,
+        notification: mpsc::Sender<Notification>,
+        recv_tip: u32,
+        change_tip: u32,
+        look_ahead: u32,
+        // TODO: pass tx_store state
+    ) -> Self {
+        let signer = WpkhHotSigner::new_from_mnemonics(network, &mnemonic.to_string())
+            .expect("valid mnemonic");
+        let address_store = AddressStore::new(
+            signer.clone(),
+            notification,
+            recv_tip,
+            change_tip,
+            look_ahead,
+        );
         Self {
             store: BTreeMap::new(),
             spk_to_outpoint: BTreeMap::new(),
             address_store,
-            tx_store,
+            tx_store: Default::default(),
             updates: Vec::new(),
             spk_history: BTreeMap::new(),
+            signer,
         }
     }
 
+    pub fn init(&mut self, tx_poller: mpsc::Sender<AddressTip>) {
+        self.address_store.init(tx_poller);
+    }
+    pub fn signer(&self) -> WpkhHotSigner {
+        self.signer.clone()
+    }
+    pub fn signer_ref(&self) -> &WpkhHotSigner {
+        &self.signer
+    }
     pub fn recv_watch_tip(&self) -> u32 {
-        self.address_store
-            .lock()
-            .expect("poisoned")
-            .recv_watch_tip()
+        self.address_store.recv_watch_tip()
     }
 
     pub fn change_watch_tip(&self) -> u32 {
-        self.address_store
-            .lock()
-            .expect("poisoned")
-            .change_watch_tip()
+        self.address_store.change_watch_tip()
     }
 
     pub fn new_recv_addr(&mut self) -> bitcoin::Address {
-        self.address_store.lock().expect("poisoned").new_recv_addr()
+        self.address_store.new_recv_addr()
     }
 
     pub fn new_change_addr(&mut self) -> bitcoin::Address {
-        self.address_store
-            .lock()
-            .expect("poisoned")
-            .new_change_addr()
+        self.address_store.new_change_addr()
     }
 
     pub fn recv_coin_at(&mut self, spk: &ScriptBuf) {
-        self.address_store
-            .lock()
-            .expect("poisoined")
-            .recv_coin_at(spk);
+        self.address_store.recv_coin_at(spk);
     }
 
     pub fn handle_history_response(
@@ -135,7 +153,7 @@ impl CoinStore {
 
         {
             // pre fill with tx we already have
-            let store = self.tx_store.lock().expect("poisoned");
+            let store = &self.tx_store;
             for upd in &mut updates {
                 for tx in &mut upd.txs {
                     if let Some(store_tx) = store.inner_get(&tx.0) {
@@ -143,7 +161,7 @@ impl CoinStore {
                     }
                 }
             }
-        } // <- release tx lock
+        } // <- release tx_store ref
 
         // request missing txs
         let mut txids = vec![];
@@ -153,7 +171,7 @@ impl CoinStore {
 
         {
             // apply updates that are already completes
-            let mut store = self.tx_store.lock().expect("poisoned");
+            let store = &mut self.tx_store;
             updates = updates
                 .into_iter()
                 .filter_map(|u| {
@@ -165,7 +183,7 @@ impl CoinStore {
                     }
                 })
                 .collect();
-        } // <- release tx lock
+        } // <- release &mut tx_store
 
         self.updates.append(&mut updates);
         txids
@@ -191,14 +209,14 @@ impl CoinStore {
 
         {
             // drop tx in the tx_store & update heights
-            let mut store = self.tx_store.lock().expect("poisoned");
+            let store = &mut self.tx_store;
             for txid in diff.removed.keys() {
                 store.remove(txid);
             }
             for (txid, height) in &diff.changed {
                 store.update_height(txid, *height);
             }
-        } // <- release tx lock
+        } // <- release &mut tx_store
 
         Update::from_diff(spk, diff)
     }
@@ -217,7 +235,7 @@ impl CoinStore {
         }
         {
             // push every complete update to the tx store
-            let mut store = self.tx_store.lock().expect("poisoned");
+            let store = &mut self.tx_store;
             self.updates = self
                 .updates
                 .clone()
@@ -231,7 +249,7 @@ impl CoinStore {
                     }
                 })
                 .collect();
-        } // <- release tx lock
+        } // <- release &mut tx_store
 
         // re-generate coin store from tx store
         self.generate();
@@ -239,9 +257,8 @@ impl CoinStore {
 
     // generate from tx_store
     pub fn generate(&mut self) {
-        // TODO: verify we cannot dead-lock there
-        let mut addr_store = self.address_store.lock().expect("poisoned");
-        let tx_store = self.tx_store.lock().expect("poisoned");
+        let addr_store = &mut self.address_store;
+        let tx_store = &self.tx_store;
 
         let mut coins = BTreeMap::<OutPoint, CoinEntry>::new();
 

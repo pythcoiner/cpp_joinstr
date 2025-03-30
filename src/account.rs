@@ -15,13 +15,11 @@ use joinstr::{
 };
 
 use crate::{
-    address_store::{AddressStore, AddressTip},
+    address_store::AddressTip,
     coin_store::{CoinEntry, CoinStore},
     cpp_joinstr::{Network, PoolStatus, SignalFlag},
     pool_store::PoolStore,
-    result,
-    tx_store::TxStore,
-    Coins, Mnemonic, Pool, Pools,
+    result, Coins, Mnemonic, Pool, Pools,
 };
 
 result!(Poll, Signal);
@@ -156,10 +154,8 @@ impl From<nostr::error::Error> for PoolListenerNotif {
 pub struct Account {
     coin_store: Arc<Mutex<CoinStore>>,
     pool_store: Arc<Mutex<PoolStore>>,
-    address_store: Arc<Mutex<AddressStore>>,
     receiver: mpsc::Receiver<Notification>,
     sender: mpsc::Sender<Notification>,
-    signer: WpkhHotSigner,
     coin_poller: Option<JoinHandle<()>>,
     pool_poller: Option<JoinHandle<()>>,
     electrum_url: String,
@@ -181,26 +177,18 @@ impl Account {
     ) -> Self {
         let (sender, receiver) = mpsc::channel();
         // TODO: import saved state from local storage
-        let signer = WpkhHotSigner::new_from_mnemonics(network, &mnemonic.to_string())
-            .expect("valid mnemonic");
-        let address_store = Arc::new(Mutex::new(AddressStore::new(
-            signer.clone(),
+        let coin_store = Arc::new(Mutex::new(CoinStore::new(
+            network,
+            mnemonic,
             sender.clone(),
             0,
             0,
             look_ahead,
         )));
-        let tx_store = Arc::new(Mutex::new(TxStore::new()));
-        let coin_store = Arc::new(Mutex::new(CoinStore::new(
-            address_store.clone(),
-            tx_store.clone(),
-        )));
         // TODO: use indexes from stored state
-        let mut wallet = Account {
+        let mut account = Account {
             coin_store,
             pool_store: Default::default(),
-            address_store,
-            signer,
             coin_poller: None,
             pool_poller: None,
             electrum_url,
@@ -210,17 +198,12 @@ impl Account {
             receiver,
             sender,
         };
-        let tx_poller = wallet.start_listen_txs();
-        if let Some(relay) = wallet.nostr_relay.as_ref() {
-            wallet.start_poll_pools(back, relay.clone());
+        let tx_poller = account.start_listen_txs();
+        account.coin_store.lock().expect("poisoned").init(tx_poller);
+        if let Some(relay) = account.nostr_relay.as_ref() {
+            account.start_poll_pools(back, relay.clone());
         }
-        wallet
-            .address_store
-            // FIXME: should we loop try_lock() instead
-            .lock()
-            .expect("poisoned")
-            .init(tx_poller);
-        wallet
+        account
     }
 
     fn boxed(self) -> Box<Self> {
@@ -232,7 +215,7 @@ impl Account {
         let (sender, address_tip) = mpsc::channel();
         let coin_store = self.coin_store.clone();
         let notification = self.sender.clone();
-        let signer = self.signer.clone();
+        let signer = self.signer();
         let addr = self.electrum_url.clone();
         let port = self.electrum_port;
         let poller = thread::spawn(move || {
@@ -251,6 +234,10 @@ impl Account {
             pool_listener(relay, pool_store, sender, back);
         });
         self.pool_poller = Some(poller);
+    }
+
+    pub fn signer(&self) -> WpkhHotSigner {
+        self.coin_store.lock().expect("poisoned").signer()
     }
 
     pub fn coins(&self) -> BTreeMap<OutPoint, CoinEntry> {
@@ -316,15 +303,37 @@ impl Account {
     }
 
     pub fn recv_addr_at(&self, index: u32) -> String {
-        self.signer.recv_addr_at(index).to_string()
+        self.coin_store
+            .lock()
+            .expect("poisoned")
+            .signer_ref()
+            .recv_addr_at(index)
+            .to_string()
     }
 
     pub fn recv_at(&self, index: u32) -> bitcoin::Address {
-        self.signer.recv_addr_at(index)
+        self.coin_store
+            .lock()
+            .expect("poisoned")
+            .signer_ref()
+            .recv_addr_at(index)
     }
 
     pub fn change_addr_at(&self, index: u32) -> String {
-        self.signer.change_addr_at(index).to_string()
+        self.coin_store
+            .lock()
+            .expect("poisoned")
+            .signer_ref()
+            .change_addr_at(index)
+            .to_string()
+    }
+
+    pub fn change_at(&self, index: u32) -> bitcoin::Address {
+        self.coin_store
+            .lock()
+            .expect("poisoned")
+            .signer_ref()
+            .change_addr_at(index)
     }
 
     pub fn new_recv_addr(&mut self) -> bitcoin::Address {
