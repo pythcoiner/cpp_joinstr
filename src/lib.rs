@@ -205,6 +205,9 @@ pub mod cpp_joinstr {
         fn set_electrum(&mut self, url: String, port: u16);
         fn start_electrum(&mut self);
         fn stop_electrum(&mut self);
+        fn set_nostr(&mut self, url: String, back: u64);
+        fn start_nostr(&mut self);
+        fn stop_nostr(&mut self);
 
         fn new_wallet(
             mnemonic: Box<Mnemonic>,
