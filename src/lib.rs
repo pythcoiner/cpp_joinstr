@@ -19,6 +19,16 @@ pub use pool::Pool;
 #[cxx::bridge]
 pub mod cpp_joinstr {
 
+    #[derive(Debug, Clone, Copy)]
+    pub enum LogLevel {
+        Off,
+        Error,
+        Warn,
+        Info,
+        Debug,
+        Trace,
+    }
+
     #[derive(Debug, Clone)]
     pub enum SignalFlag {
         TxListenerStarted,
@@ -202,9 +212,13 @@ pub mod cpp_joinstr {
             back: u64,
         ) -> Box<Account>;
     }
+
+    extern "Rust" {
+        fn init_rust_logger(level: LogLevel);
+    }
 }
 
-use cpp_joinstr::{Network, SignalFlag};
+use cpp_joinstr::{LogLevel, Network, SignalFlag};
 
 impl Network {
     pub fn boxed(&self) -> Box<Network> {
@@ -308,4 +322,37 @@ impl Display for SignalFlag {
 
 pub fn signal_flag_to_string(signal: SignalFlag) -> String {
     signal.to_string()
+}
+
+impl From<LogLevel> for log::LevelFilter {
+    fn from(value: LogLevel) -> Self {
+        match value {
+            LogLevel::Off => Self::Off,
+            LogLevel::Error => Self::Error,
+            LogLevel::Warn => Self::Warn,
+            LogLevel::Info => Self::Info,
+            LogLevel::Debug => Self::Debug,
+            LogLevel::Trace => Self::Trace,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl From<log::LevelFilter> for LogLevel {
+    fn from(value: log::LevelFilter) -> Self {
+        match value {
+            log::LevelFilter::Off => Self::Off,
+            log::LevelFilter::Error => Self::Error,
+            log::LevelFilter::Warn => Self::Warn,
+            log::LevelFilter::Info => Self::Info,
+            log::LevelFilter::Debug => Self::Debug,
+            log::LevelFilter::Trace => Self::Trace,
+        }
+    }
+}
+
+pub fn init_rust_logger(level: LogLevel) {
+    let level = level.into();
+    env_logger::builder().filter_level(level).init();
+    log::info!("init_rust_logger()");
 }
