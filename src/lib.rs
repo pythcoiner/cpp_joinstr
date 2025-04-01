@@ -202,6 +202,7 @@ pub mod cpp_joinstr {
         fn try_recv(&mut self) -> Box<Poll>;
         fn relay(&self) -> String;
         fn new_addr(&mut self) -> Box<AddressEntry>;
+        fn stop_electrum(&mut self);
 
         fn new_wallet(
             mnemonic: Box<Mnemonic>,
