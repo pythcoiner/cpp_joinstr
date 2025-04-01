@@ -160,11 +160,13 @@ pub struct Account {
     receiver: mpsc::Receiver<Notification>,
     sender: mpsc::Sender<Notification>,
     tx_listener: Option<JoinHandle<()>>,
-    pool_poller: Option<JoinHandle<()>>,
+    pool_listener: Option<JoinHandle<()>>,
     electrum_url: Option<String>,
     electrum_port: Option<u16>,
     electrum_stop: Option<Arc<AtomicBool>>,
     nostr_relay: Option<String>,
+    nostr_back: Option<u64>,
+    nostr_stop: Option<Arc<AtomicBool>>,
     network: bitcoin::Network,
 }
 
@@ -176,7 +178,7 @@ impl Account {
         electrum_url: Option<String>,
         electrum_port: Option<u16>,
         nostr_relay: Option<String>,
-        back: u64,
+        nostr_back: Option<u64>,
         look_ahead: u32,
     ) -> Self {
         let (sender, receiver) = mpsc::channel();
@@ -194,19 +196,19 @@ impl Account {
             coin_store,
             pool_store: Default::default(),
             tx_listener: None,
-            pool_poller: None,
+            pool_listener: None,
             electrum_url,
             electrum_port,
             electrum_stop: None,
             nostr_relay,
+            nostr_back,
+            nostr_stop: None,
             network,
             receiver,
             sender,
         };
         account.start_electrum();
-        if let Some(relay) = account.nostr_relay.as_ref() {
-            account.start_poll_pools(back, relay.clone());
-        }
+        account.start_nostr();
         account
     }
 
@@ -241,15 +243,18 @@ impl Account {
         (sender, stop)
     }
 
-    fn start_poll_pools(&mut self, back: u64, relay: String) {
+    fn start_poll_pools(&mut self, back: u64, relay: String) -> Arc<AtomicBool> {
         log::debug!("Account::start_poll_pools()");
         let pool_store = self.pool_store.clone();
         let sender = self.sender.clone();
 
+        let stop = Arc::new(AtomicBool::new(false));
+        let cloned_stop = stop.clone();
         let poller = thread::spawn(move || {
-            pool_listener(relay, pool_store, sender, back);
+            pool_listener(relay, pool_store, sender, back, cloned_stop);
         });
-        self.pool_poller = Some(poller);
+        self.pool_listener = Some(poller);
+        stop
     }
 
     pub fn signer(&self) -> WpkhHotSigner {
@@ -359,12 +364,39 @@ impl Account {
         self.electrum_stop = None;
     }
 
+    pub fn set_nostr(&mut self, url: String, back: u64) {
+        self.nostr_relay = Some(url);
+        self.nostr_back = Some(back);
+    }
+
+    pub fn start_nostr(&mut self) {
+        if let (None, Some(relay), Some(back)) = (
+            &self.pool_listener,
+            self.nostr_relay.as_ref(),
+            self.nostr_back,
+        ) {
+            let stop = self.start_poll_pools(back, relay.clone());
+            self.nostr_stop = Some(stop);
+        }
+    }
+
+    pub fn stop_nostr(&mut self) {
+        if let Some(stop) = self.nostr_stop.as_mut() {
+            stop.store(true, Ordering::Relaxed);
+        }
+        self.nostr_stop = None;
+    }
+
     pub fn try_recv(&mut self) -> Box<Poll> {
         let mut poll = Poll::new();
         match self.receiver.try_recv() {
             Ok(notif) => {
                 if let Notification::Electrum(TxListenerNotif::Stopped) = &notif {
                     self.electrum_stop = None;
+                    self.tx_listener = None;
+                } else if let Notification::Joinstr(PoolListenerNotif::Stopped) = &notif {
+                    self.nostr_stop = None;
+                    self.pool_listener = None;
                 }
                 poll.set(notif.to_signal());
             }
@@ -438,12 +470,14 @@ pub fn new_wallet(
         network.into(),
         None,
         None,
-        Some(relay),
-        back,
+        None,
+        None,
         100,
     );
     account.set_electrum(addr, port);
     account.start_electrum();
+    account.set_nostr(relay, back);
+    account.start_nostr();
     account.boxed()
 }
 
@@ -623,6 +657,7 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
     pool_store: Arc<Mutex<PoolStore>>,
     sender: mpsc::Sender<N>,
     back: u64,
+    stop_request: Arc<AtomicBool>,
 ) {
     let mut pool_listener = NostrClient::new("pool_listener")
         .relay(relay.clone())
@@ -642,9 +677,14 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
         return;
     }
 
-    // TODO: implement remote stop
-
     loop {
+        if stop_request.load(Ordering::Relaxed) {
+            log::error!("pool_listener() stop requested");
+            let msg = PoolListenerNotif::Stopped;
+            sender.send(msg.into()).unwrap();
+            return;
+        }
+
         let pool = match pool_listener.receive_pool_notification() {
             Ok(Some(pool)) => pool,
             Ok(None) => {

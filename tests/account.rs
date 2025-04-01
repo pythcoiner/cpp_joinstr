@@ -43,7 +43,7 @@ fn simple_wallet() {
         Some(url),
         Some(port),
         None,
-        0,
+        Some(0),
         look_ahead,
     );
     account.start_electrum();
