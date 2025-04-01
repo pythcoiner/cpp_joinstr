@@ -1,6 +1,7 @@
 pub mod account;
 pub mod address_store;
 pub mod coin_store;
+pub mod config;
 pub mod macros;
 pub mod mnemonic;
 pub mod pool;
@@ -12,6 +13,7 @@ use std::fmt::Display;
 use account::{new_wallet, Account, Poll, Signal};
 use address_store::AddressEntry;
 use coin_store::CoinEntry;
+pub use config::{config_from_file, Config};
 use joinstr::miniscript::bitcoin;
 pub use mnemonic::{mnemonic_from_string, Mnemonic};
 pub use pool::Pool;
@@ -81,6 +83,20 @@ pub mod cpp_joinstr {
         NotUsed,
         Used,
         Reused,
+    }
+
+    extern "Rust" {
+        type Config;
+        fn electrum_url(&self) -> String;
+        fn electrum_port(&self) -> String;
+        fn nostr_url(&self) -> String;
+        fn nostr_back(&self) -> String;
+        fn set_electrum_url(&mut self, url: String);
+        fn set_electrum_port(&mut self, port: u16);
+        fn set_nostr_relay(&mut self, relay: String);
+        fn set_nostr_back(&mut self, back: u64);
+        fn to_file(&self);
+        fn config_from_file(account: String) -> Box<Config>;
     }
 
     extern "Rust" {
