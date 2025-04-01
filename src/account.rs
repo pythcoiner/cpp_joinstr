@@ -163,6 +163,7 @@ pub struct Account {
     pool_poller: Option<JoinHandle<()>>,
     electrum_url: String,
     electrum_port: u16,
+    electrum_stop: Option<Arc<AtomicBool>>,
     nostr_relay: Option<String>,
     network: bitcoin::Network,
 }
@@ -196,13 +197,15 @@ impl Account {
             pool_poller: None,
             electrum_url,
             electrum_port,
+            electrum_stop: None,
             nostr_relay,
             network,
             receiver,
             sender,
         };
-        let tx_poller = account.start_listen_txs();
+        let (tx_poller, electrum_stop) = account.start_listen_txs();
         account.coin_store.lock().expect("poisoned").init(tx_poller);
+        account.electrum_stop = Some(electrum_stop);
         if let Some(relay) = account.nostr_relay.as_ref() {
             account.start_poll_pools(back, relay.clone());
         }
@@ -213,7 +216,7 @@ impl Account {
         Box::new(self)
     }
 
-    fn start_listen_txs(&mut self) -> mpsc::Sender<AddressTip> {
+    fn start_listen_txs(&mut self) -> (mpsc::Sender<AddressTip>, Arc<AtomicBool>) {
         log::debug!("Account::start_poll_txs()");
         let (sender, address_tip) = mpsc::channel();
         let coin_store = self.coin_store.clone();
@@ -221,11 +224,21 @@ impl Account {
         let signer = self.signer();
         let addr = self.electrum_url.clone();
         let port = self.electrum_port;
+        let stop = Arc::new(AtomicBool::new(false));
+        let cloned_stop = stop.clone();
         let poller = thread::spawn(move || {
-            listen_txs(addr, port, coin_store, signer, notification, address_tip);
+            listen_txs(
+                addr,
+                port,
+                coin_store,
+                signer,
+                notification,
+                address_tip,
+                cloned_stop,
+            );
         });
         self.coin_poller = Some(poller);
-        sender
+        (sender, stop)
     }
 
     fn start_poll_pools(&mut self, back: u64, relay: String) {
@@ -322,10 +335,20 @@ impl Account {
         todo!()
     }
 
+    pub fn stop_electrum(&mut self) {
+        if let Some(stop) = self.electrum_stop.as_mut() {
+            stop.store(true, Ordering::Relaxed);
+        }
+        self.electrum_stop = None;
+    }
+
     pub fn try_recv(&mut self) -> Box<Poll> {
         let mut poll = Poll::new();
         match self.receiver.try_recv() {
             Ok(notif) => {
+                if let Notification::Electrum(TxListenerNotif::Stopped) = &notif {
+                    self.electrum_stop = None;
+                }
                 poll.set(notif.to_signal());
             }
             Err(e) => match e {
@@ -432,6 +455,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
     signer: WpkhHotSigner,
     notification: mpsc::Sender<T>,
     address_tip: mpsc::Receiver<AddressTip>,
+    stop_request: Arc<AtomicBool>,
 ) {
     let client = match joinstr::electrum::Client::new(&addr, port) {
         Ok(c) => c,
@@ -458,6 +482,12 @@ fn listen_txs<T: From<TxListenerNotif>>(
     send_notif!(notification, stop, TxListenerNotif::Started);
 
     loop {
+        // stop request from consumer side
+        if stop_request.load(Ordering::Relaxed) {
+            send_notif!(notification, stop, TxListenerNotif::Stopped);
+            return;
+        }
+
         let mut received = false;
 
         // listen for AddressTip update
