@@ -58,10 +58,12 @@ impl AddressStore {
     }
 
     fn update_watch_tip(&self) {
-        if let Some(tx_poller) = &self.tx_poller {
+        if let Some(tx_listener) = &self.tx_poller {
             let recv = self.recv_watch_tip();
             let change = self.change_watch_tip();
-            tx_poller.send(AddressTip { recv, change }).unwrap();
+            // NOTE: tx_listener thread must send notification itself if
+            // fail to connect to electrum
+            let _ = tx_listener.send(AddressTip { recv, change });
         }
     }
 
