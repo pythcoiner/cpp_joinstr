@@ -1,6 +1,9 @@
 use std::{
     collections::BTreeMap,
-    sync::{mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex,
+    },
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -402,6 +405,26 @@ pub fn new_wallet(
     .boxed()
 }
 
+macro_rules! send_notif {
+    ($notification:expr, $stop:expr, $msg:expr) => {
+        let res = $notification.send($msg.into());
+        if res.is_err() {
+            // stop detached client
+            $stop.store(true, Ordering::Relaxed);
+            return;
+        }
+    };
+}
+
+macro_rules! send_electrum {
+    ($request:expr, $notification:expr, $stop:expr, $msg:expr) => {
+        if $request.send($msg).is_err() {
+            send_notif!($notification, $stop, TxListenerNotif::Stopped);
+            return;
+        }
+    };
+}
+
 fn listen_txs<T: From<TxListenerNotif>>(
     addr: String,
     port: u16,
@@ -414,10 +437,12 @@ fn listen_txs<T: From<TxListenerNotif>>(
         Ok(c) => c,
         Err(e) => {
             log::error!("listen_txs(): fail to create electrum client {}", e);
-            notification
-                .send(TxListenerNotif::Error(e.to_string()).into())
-                // TODO: do not unwrap
-                .unwrap();
+            send_notif!(
+                notification,
+                // dummy stop
+                Arc::new(AtomicBool::new(false)),
+                TxListenerNotif::Error(e.to_string())
+            );
             return;
         }
     };
@@ -427,13 +452,10 @@ fn listen_txs<T: From<TxListenerNotif>>(
     let mut paths = BTreeMap::<ScriptBuf, (u32, u32)>::new();
     let mut statuses = BTreeMap::<ScriptBuf, Option<String>>::new();
 
-    let (request, response) = client.listen::<CoinRequest, CoinResponse>();
+    let (request, response, stop) = client.listen::<CoinRequest, CoinResponse>();
 
     log::info!("listen_txs(): started");
-    notification
-        .send(TxListenerNotif::Started.into())
-        // TODO: do not unwrap
-        .unwrap();
+    send_notif!(notification, stop, TxListenerNotif::Started);
 
     loop {
         let mut received = false;
@@ -469,16 +491,17 @@ fn listen_txs<T: From<TxListenerNotif>>(
                         }
                     }
                 }
-                request.send(CoinRequest::Subscribe(sub)).unwrap();
+                send_electrum!(request, notification, stop, CoinRequest::Subscribe(sub));
             }
             Err(e) => match e {
                 mpsc::TryRecvError::Empty => {}
                 mpsc::TryRecvError::Disconnected => {
                     log::error!("listen_txs(): address store disconnected");
-                    notification
-                        .send(TxListenerNotif::Error("AddressStore disconnected".into()).into())
-                        // TODO: do not unwrap
-                        .unwrap();
+                    send_notif!(
+                        notification,
+                        stop,
+                        TxListenerNotif::Error("AddressStore disconnected".to_string())
+                    );
                     // FIXME: what should we do there?
                     // it's AddressStore being dropped, but she should keep upating
                     // the actual spk set even if it cannot grow anymore
@@ -505,25 +528,24 @@ fn listen_txs<T: From<TxListenerNotif>>(
                                 history.push(spk);
                             }
                         }
-                        // TODO: do not unwrap
-                        request.send(CoinRequest::History(history)).unwrap();
+                        send_electrum!(request, notification, stop, CoinRequest::History(history));
                     }
                     CoinResponse::History(map) => {
                         let mut store = coin_store.lock().expect("poisoned");
                         let missing_txs = store.handle_history_response(map);
-                        request.send(CoinRequest::Txs(missing_txs)).unwrap();
+                        send_electrum!(request, notification, stop, CoinRequest::Txs(missing_txs));
                     }
                     CoinResponse::Txs(txs) => {
                         let mut store = coin_store.lock().expect("poisoned");
                         store.handle_txs_response(txs);
                     }
                     CoinResponse::Stopped => {
-                        notification.send(TxListenerNotif::Stopped.into()).unwrap();
+                        send_notif!(notification, stop, TxListenerNotif::Stopped);
+                        stop.store(true, Ordering::Relaxed);
                         return;
                     }
                     CoinResponse::Error(e) => {
-                        // TODO: do not unwrap
-                        notification.send(TxListenerNotif::Error(e).into()).unwrap();
+                        send_notif!(notification, stop, TxListenerNotif::Error(e));
                     }
                 }
             }
@@ -531,9 +553,9 @@ fn listen_txs<T: From<TxListenerNotif>>(
                 mpsc::TryRecvError::Empty => {}
                 mpsc::TryRecvError::Disconnected => {
                     // NOTE: here the electrum client is dropped, we cannot continue
-                    // TODO: do not unwrap
                     log::error!("listen_txs() electrum client stopped unexpectedly");
-                    notification.send(TxListenerNotif::Stopped.into()).unwrap();
+                    send_notif!(notification, stop, TxListenerNotif::Stopped);
+                    stop.store(true, Ordering::Relaxed);
                     return;
                 }
             },
