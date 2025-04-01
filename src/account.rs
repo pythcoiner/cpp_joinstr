@@ -562,11 +562,13 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
         log::error!("pool_listener() fail to connect to nostr relay: {e:?}");
         let msg: PoolListenerNotif = e.into();
         sender.send(msg.into()).unwrap();
+        return;
     }
     if let Err(e) = pool_listener.subscribe_pools(back) {
         log::error!("pool_listener() fail to subscribe to pool notifications: {e:?}");
         let msg: PoolListenerNotif = e.into();
         sender.send(msg.into()).unwrap();
+        return;
     }
 
     // TODO: implement remote stop
@@ -591,6 +593,7 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
                         log::error!("pool_listener() fail to reconnect: {e:?}");
                         let msg: PoolListenerNotif = e.into();
                         sender.send(msg.into()).unwrap();
+                        return;
                     }
                     if let Err(e) = pool_listener.subscribe_pools(back) {
                         log::error!(
@@ -598,6 +601,7 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
                         );
                         let msg: PoolListenerNotif = e.into();
                         sender.send(msg.into()).unwrap();
+                        return;
                     }
                     thread::sleep(Duration::from_millis(50));
                     continue;
