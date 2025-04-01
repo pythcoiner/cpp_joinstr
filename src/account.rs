@@ -661,19 +661,20 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
 ) {
     let mut pool_listener = NostrClient::new("pool_listener")
         .relay(relay.clone())
-        .unwrap()
+        .expect("not connected")
         .keys(Keys::generate())
-        .unwrap();
+        .expect("not connected");
+
     if let Err(e) = pool_listener.connect_nostr() {
         log::error!("pool_listener() fail to connect to nostr relay: {e:?}");
         let msg: PoolListenerNotif = e.into();
-        sender.send(msg.into()).unwrap();
+        let _ = sender.send(msg.into());
         return;
     }
     if let Err(e) = pool_listener.subscribe_pools(back) {
         log::error!("pool_listener() fail to subscribe to pool notifications: {e:?}");
         let msg: PoolListenerNotif = e.into();
-        sender.send(msg.into()).unwrap();
+        let _ = sender.send(msg.into());
         return;
     }
 
@@ -681,7 +682,7 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
         if stop_request.load(Ordering::Relaxed) {
             log::error!("pool_listener() stop requested");
             let msg = PoolListenerNotif::Stopped;
-            sender.send(msg.into()).unwrap();
+            let _ = sender.send(msg.into());
             return;
         }
 
@@ -697,13 +698,16 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
                     // connexion lost try to reconnect
                     pool_listener = NostrClient::new("pool_listener")
                         .relay(relay.clone())
-                        .unwrap()
+                        .expect("not connected")
                         .keys(Keys::generate())
-                        .unwrap();
+                        .expect("not connected");
+
                     if let Err(e) = pool_listener.connect_nostr() {
                         log::error!("pool_listener() fail to reconnect: {e:?}");
                         let msg: PoolListenerNotif = e.into();
-                        sender.send(msg.into()).unwrap();
+                        let _ = sender.send(msg.into());
+                        let msg = PoolListenerNotif::Stopped;
+                        let _ = sender.send(msg.into());
                         return;
                     }
                     if let Err(e) = pool_listener.subscribe_pools(back) {
@@ -711,7 +715,9 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
                             "pool_listener() fail to subscribe to pool notifications: {e:?}"
                         );
                         let msg: PoolListenerNotif = e.into();
-                        sender.send(msg.into()).unwrap();
+                        let _ = sender.send(msg.into());
+                        let msg = PoolListenerNotif::Stopped;
+                        let _ = sender.send(msg.into());
                         return;
                     }
                     thread::sleep(Duration::from_millis(50));
@@ -720,7 +726,9 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
                 e => {
                     log::error!("pool_listener() unexpected error: {e:?}");
                     let msg: PoolListenerNotif = e.into();
-                    sender.send(msg.into()).unwrap();
+                    let _ = sender.send(msg.into());
+                    let msg = PoolListenerNotif::Stopped;
+                    let _ = sender.send(msg.into());
                     return;
                 }
             },
@@ -728,7 +736,9 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
         {
             let mut store = pool_store.lock().expect("poisoned");
             store.update(pool, PoolStatus::Available);
-            sender.send(PoolListenerNotif::PoolUpdate.into()).unwrap();
+            if sender.send(PoolListenerNotif::PoolUpdate.into()).is_err() {
+                return;
+            }
         } // release store lock
     }
 }
