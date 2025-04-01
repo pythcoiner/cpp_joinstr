@@ -159,10 +159,10 @@ pub struct Account {
     pool_store: Arc<Mutex<PoolStore>>,
     receiver: mpsc::Receiver<Notification>,
     sender: mpsc::Sender<Notification>,
-    coin_poller: Option<JoinHandle<()>>,
+    tx_listener: Option<JoinHandle<()>>,
     pool_poller: Option<JoinHandle<()>>,
-    electrum_url: String,
-    electrum_port: u16,
+    electrum_url: Option<String>,
+    electrum_port: Option<u16>,
     electrum_stop: Option<Arc<AtomicBool>>,
     nostr_relay: Option<String>,
     network: bitcoin::Network,
@@ -173,8 +173,8 @@ impl Account {
     pub fn new(
         mnemonic: bip39::Mnemonic,
         network: bitcoin::Network,
-        electrum_url: String,
-        electrum_port: u16,
+        electrum_url: Option<String>,
+        electrum_port: Option<u16>,
         nostr_relay: Option<String>,
         back: u64,
         look_ahead: u32,
@@ -193,7 +193,7 @@ impl Account {
         let mut account = Account {
             coin_store,
             pool_store: Default::default(),
-            coin_poller: None,
+            tx_listener: None,
             pool_poller: None,
             electrum_url,
             electrum_port,
@@ -203,9 +203,7 @@ impl Account {
             receiver,
             sender,
         };
-        let (tx_poller, electrum_stop) = account.start_listen_txs();
-        account.coin_store.lock().expect("poisoned").init(tx_poller);
-        account.electrum_stop = Some(electrum_stop);
+        account.start_electrum();
         if let Some(relay) = account.nostr_relay.as_ref() {
             account.start_poll_pools(back, relay.clone());
         }
@@ -216,14 +214,16 @@ impl Account {
         Box::new(self)
     }
 
-    fn start_listen_txs(&mut self) -> (mpsc::Sender<AddressTip>, Arc<AtomicBool>) {
+    fn start_listen_txs(
+        &mut self,
+        addr: String,
+        port: u16,
+    ) -> (mpsc::Sender<AddressTip>, Arc<AtomicBool>) {
         log::debug!("Account::start_poll_txs()");
         let (sender, address_tip) = mpsc::channel();
         let coin_store = self.coin_store.clone();
         let notification = self.sender.clone();
         let signer = self.signer();
-        let addr = self.electrum_url.clone();
-        let port = self.electrum_port;
         let stop = Arc::new(AtomicBool::new(false));
         let cloned_stop = stop.clone();
         let poller = thread::spawn(move || {
@@ -237,7 +237,7 @@ impl Account {
                 cloned_stop,
             );
         });
-        self.coin_poller = Some(poller);
+        self.tx_listener = Some(poller);
         (sender, stop)
     }
 
@@ -335,6 +335,23 @@ impl Account {
         todo!()
     }
 
+    pub fn set_electrum(&mut self, url: String, port: u16) {
+        self.electrum_url = Some(url);
+        self.electrum_port = Some(port);
+    }
+
+    pub fn start_electrum(&mut self) {
+        if let (None, Some(addr), Some(port)) = (
+            &self.tx_listener,
+            self.electrum_url.clone(),
+            self.electrum_port,
+        ) {
+            let (tx_poller, electrum_stop) = self.start_listen_txs(addr, port);
+            self.coin_store.lock().expect("poisoned").init(tx_poller);
+            self.electrum_stop = Some(electrum_stop);
+        }
+    }
+
     pub fn stop_electrum(&mut self) {
         if let Some(stop) = self.electrum_stop.as_mut() {
             stop.store(true, Ordering::Relaxed);
@@ -416,16 +433,18 @@ pub fn new_wallet(
     relay: String,
     back: u64,
 ) -> Box<Account> {
-    Account::new(
+    let mut account = Account::new(
         (*mnemonic).into(),
         network.into(),
-        addr,
-        port,
+        None,
+        None,
         Some(relay),
         back,
         100,
-    )
-    .boxed()
+    );
+    account.set_electrum(addr, port);
+    account.start_electrum();
+    account.boxed()
 }
 
 macro_rules! send_notif {

@@ -37,7 +37,16 @@ fn simple_wallet() {
     let look_ahead = 20;
 
     let mnemonic = Mnemonic::generate(12).unwrap();
-    let mut account = Account::new(mnemonic, Network::Regtest, url, port, None, 0, look_ahead);
+    let mut account = Account::new(
+        mnemonic,
+        Network::Regtest,
+        Some(url),
+        Some(port),
+        None,
+        0,
+        look_ahead,
+    );
+    account.start_electrum();
     sleep(Duration::from_millis(300));
 
     // normal receive flow
