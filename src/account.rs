@@ -613,12 +613,26 @@ fn listen_txs<T: From<TxListenerNotif>>(
                                 history.push(spk);
                             }
                         }
-                        send_electrum!(request, notification, stop, CoinRequest::History(history));
+                        if !history.is_empty() {
+                            send_electrum!(
+                                request,
+                                notification,
+                                stop,
+                                CoinRequest::History(history)
+                            );
+                        }
                     }
                     CoinResponse::History(map) => {
                         let mut store = coin_store.lock().expect("poisoned");
                         let missing_txs = store.handle_history_response(map);
-                        send_electrum!(request, notification, stop, CoinRequest::Txs(missing_txs));
+                        if !missing_txs.is_empty() {
+                            send_electrum!(
+                                request,
+                                notification,
+                                stop,
+                                CoinRequest::Txs(missing_txs)
+                            );
+                        }
                     }
                     CoinResponse::Txs(txs) => {
                         let mut store = coin_store.lock().expect("poisoned");
