@@ -45,15 +45,15 @@ fn maybe_create_dir(dir: &PathBuf) {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     #[serde(skip)]
-    account: String,
+    pub account: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    electrum_url: Option<String>,
+    pub electrum_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    electrum_port: Option<u16>,
+    pub electrum_port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    nostr_relay: Option<String>,
+    pub nostr_relay: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    nostr_back: Option<u64>,
+    pub nostr_back: Option<u64>,
 }
 
 impl Default for Config {

@@ -2,7 +2,7 @@ pub mod utils;
 use std::{sync::Once, thread::sleep, time::Duration};
 
 use crate::utils::bootstrap_electrs;
-use cpp_joinstr::account::Account;
+use cpp_joinstr::{account::Account, Config};
 use joinstr::{
     bip39::Mnemonic,
     miniscript::bitcoin::{Amount, Network},
@@ -37,15 +37,10 @@ fn simple_wallet() {
     let look_ahead = 20;
 
     let mnemonic = Mnemonic::generate(12).unwrap();
-    let mut account = Account::new(
-        mnemonic,
-        Network::Regtest,
-        Some(url),
-        Some(port),
-        None,
-        Some(0),
-        look_ahead,
-    );
+    let mut config = Config::default();
+    config.set_electrum_url(url);
+    config.set_electrum_port(port.to_string());
+    let mut account = Account::new(mnemonic, Network::Regtest, config, look_ahead);
     account.start_electrum();
     sleep(Duration::from_millis(300));
 

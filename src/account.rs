@@ -22,7 +22,7 @@ use crate::{
     coin_store::{CoinEntry, CoinStore},
     cpp_joinstr::{AddrAccount, AddressStatus, Network, PoolStatus, SignalFlag},
     pool_store::PoolStore,
-    result, Coins, Mnemonic, Pool, Pools,
+    result, Coins, Config, Mnemonic, Pool, Pools,
 };
 
 result!(Poll, Signal);
@@ -161,11 +161,8 @@ pub struct Account {
     sender: mpsc::Sender<Notification>,
     tx_listener: Option<JoinHandle<()>>,
     pool_listener: Option<JoinHandle<()>>,
-    electrum_url: Option<String>,
-    electrum_port: Option<u16>,
+    config: Config,
     electrum_stop: Option<Arc<AtomicBool>>,
-    nostr_relay: Option<String>,
-    nostr_back: Option<u64>,
     nostr_stop: Option<Arc<AtomicBool>>,
     network: bitcoin::Network,
 }
@@ -175,10 +172,7 @@ impl Account {
     pub fn new(
         mnemonic: bip39::Mnemonic,
         network: bitcoin::Network,
-        electrum_url: Option<String>,
-        electrum_port: Option<u16>,
-        nostr_relay: Option<String>,
-        nostr_back: Option<u64>,
+        config: Config,
         look_ahead: u32,
     ) -> Self {
         let (sender, receiver) = mpsc::channel();
@@ -197,15 +191,12 @@ impl Account {
             pool_store: Default::default(),
             tx_listener: None,
             pool_listener: None,
-            electrum_url,
-            electrum_port,
             electrum_stop: None,
-            nostr_relay,
-            nostr_back,
             nostr_stop: None,
             network,
             receiver,
             sender,
+            config,
         };
         account.start_electrum();
         account.start_nostr();
@@ -341,15 +332,15 @@ impl Account {
     }
 
     pub fn set_electrum(&mut self, url: String, port: u16) {
-        self.electrum_url = Some(url);
-        self.electrum_port = Some(port);
+        self.config.electrum_url = Some(url);
+        self.config.electrum_port = Some(port);
     }
 
     pub fn start_electrum(&mut self) {
         if let (None, Some(addr), Some(port)) = (
             &self.tx_listener,
-            self.electrum_url.clone(),
-            self.electrum_port,
+            self.config.electrum_url.clone(),
+            self.config.electrum_port,
         ) {
             let (tx_poller, electrum_stop) = self.start_listen_txs(addr, port);
             self.coin_store.lock().expect("poisoned").init(tx_poller);
@@ -365,15 +356,15 @@ impl Account {
     }
 
     pub fn set_nostr(&mut self, url: String, back: u64) {
-        self.nostr_relay = Some(url);
-        self.nostr_back = Some(back);
+        self.config.nostr_relay = Some(url);
+        self.config.nostr_back = Some(back);
     }
 
     pub fn start_nostr(&mut self) {
         if let (None, Some(relay), Some(back)) = (
             &self.pool_listener,
-            self.nostr_relay.as_ref(),
-            self.nostr_back,
+            self.config.nostr_relay.as_ref(),
+            self.config.nostr_back,
         ) {
             let stop = self.start_poll_pools(back, relay.clone());
             self.nostr_stop = Some(stop);
@@ -438,38 +429,27 @@ impl Account {
     }
 
     pub fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32) {
-        let relay = self.nostr_relay.clone();
-        let network = self.network;
-        thread::spawn(move || {
-            dummy_pool(
-                relay.expect("have a relay"),
-                denomination,
-                peers,
-                timeout,
-                fee,
-                network,
-            );
-        });
+        if let Some(nostr_relay) = &self.config.nostr_relay {
+            let relay = nostr_relay.clone();
+            let network = self.network;
+            thread::spawn(move || {
+                dummy_pool(relay, denomination, peers, timeout, fee, network);
+            });
+        }
     }
 
     pub fn relay(&self) -> String {
-        self.nostr_relay.clone().unwrap()
+        self.config.nostr_relay.clone().unwrap()
     }
 }
 
 pub fn new_account(
     #[allow(clippy::boxed_local)] mnemonic: Box<Mnemonic>,
     network: Network,
+    account: String,
 ) -> Box<Account> {
-    let account = Account::new(
-        (*mnemonic).into(),
-        network.into(),
-        None,
-        None,
-        None,
-        None,
-        100,
-    );
+    let config = Config::from_file(account);
+    let account = Account::new((*mnemonic).into(), network.into(), config, 100);
     account.boxed()
 }
 
