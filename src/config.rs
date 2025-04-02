@@ -10,14 +10,14 @@ fn datadir() -> PathBuf {
     #[cfg(target_os = "linux")]
     let dir = {
         let mut dir = dirs::home_dir().unwrap();
-        dir.push(".escrow");
+        dir.push(".qoinstr");
         dir
     };
 
     #[cfg(not(target_os = "linux"))]
     let dir = {
         let mut dir = dirs::config_dir().unwrap();
-        dir.push("Escrow");
+        dir.push("Qoinstr");
         dir
     };
 
@@ -115,15 +115,19 @@ impl Config {
     }
     pub fn set_electrum_url(&mut self, url: String) {
         self.electrum_url = Some(url);
+        self.to_file();
     }
     pub fn set_electrum_port(&mut self, port: String) {
         self.electrum_port = port.parse::<u16>().ok();
+        self.to_file();
     }
     pub fn set_nostr_relay(&mut self, relay: String) {
         self.nostr_relay = Some(relay);
+        self.to_file();
     }
     pub fn set_nostr_back(&mut self, back: String) {
-        self.nostr_back = back.parse::<u64>().ok()
+        self.nostr_back = back.parse::<u64>().ok();
+        self.to_file();
     }
     pub fn to_file(&self) {
         let mut path = Self::path(self.account.clone());
