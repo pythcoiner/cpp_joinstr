@@ -225,6 +225,7 @@ pub mod cpp_joinstr {
         fn set_nostr(&mut self, url: String, back: String);
         fn start_nostr(&mut self);
         fn stop_nostr(&mut self);
+        fn get_config(&self) -> Box<Config>;
 
         fn new_account(mnemonic: Box<Mnemonic>, network: Network, account: String) -> Box<Account>;
     }

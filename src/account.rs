@@ -402,6 +402,10 @@ impl Account {
         self.nostr_stop = None;
     }
 
+    pub fn get_config(&self) -> Box<Config> {
+        self.config.clone().boxed()
+    }
+
     pub fn try_recv(&mut self) -> Box<Poll> {
         let mut poll = Poll::new();
         match self.receiver.try_recv() {
