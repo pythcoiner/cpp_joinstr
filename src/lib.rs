@@ -10,7 +10,7 @@ pub mod tx_store;
 
 use std::fmt::Display;
 
-use account::{new_wallet, Account, Poll, Signal};
+use account::{new_account, Account, Poll, Signal};
 use address_store::AddressEntry;
 use coin_store::CoinEntry;
 pub use config::{config_from_file, Config};
@@ -225,14 +225,7 @@ pub mod cpp_joinstr {
         fn start_nostr(&mut self);
         fn stop_nostr(&mut self);
 
-        fn new_wallet(
-            mnemonic: Box<Mnemonic>,
-            network: Network,
-            addr: String,
-            port: u16,
-            relay: String,
-            back: u64,
-        ) -> Box<Account>;
+        fn new_account(mnemonic: Box<Mnemonic>, network: Network) -> Box<Account>;
     }
 
     extern "Rust" {

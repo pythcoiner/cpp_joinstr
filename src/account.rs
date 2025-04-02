@@ -457,15 +457,11 @@ impl Account {
     }
 }
 
-pub fn new_wallet(
+pub fn new_account(
     #[allow(clippy::boxed_local)] mnemonic: Box<Mnemonic>,
     network: Network,
-    addr: String,
-    port: u16,
-    relay: String,
-    back: u64,
 ) -> Box<Account> {
-    let mut account = Account::new(
+    let account = Account::new(
         (*mnemonic).into(),
         network.into(),
         None,
@@ -474,10 +470,6 @@ pub fn new_wallet(
         None,
         100,
     );
-    account.set_electrum(addr, port);
-    account.start_electrum();
-    account.set_nostr(relay, back);
-    account.start_nostr();
     account.boxed()
 }
 
