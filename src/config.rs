@@ -83,10 +83,13 @@ impl Config {
         let mut path = Self::path(account);
         path.push("config.json");
 
-        let mut file = File::open(path).unwrap();
-        let mut content = String::new();
-        let _ = file.read_to_string(&mut content);
-        serde_json::from_str(&content).ok().unwrap_or_default()
+        if let Ok(mut file) = File::open(path) {
+            let mut content = String::new();
+            let _ = file.read_to_string(&mut content);
+            serde_json::from_str(&content).ok().unwrap_or_default()
+        } else {
+            Self::default()
+        }
     }
 }
 
