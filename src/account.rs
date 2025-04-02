@@ -478,8 +478,8 @@ pub fn new_account(
     account: String,
 ) -> Box<Account> {
     let config = Config::from_file(account);
-    
-    let account = Account::new((*mnemonic).into(), network.into(), config, 100);
+
+    let account = Account::new((*mnemonic).into(), network.into(), config, 10);
     account.boxed()
 }
 
