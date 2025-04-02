@@ -86,7 +86,8 @@ pub mod cpp_joinstr {
     }
 
     extern "Rust" {
-        type Config;
+        #[rust_name = Config]
+        type RustConfig;
         fn electrum_url(&self) -> String;
         fn electrum_port(&self) -> String;
         fn nostr_url(&self) -> String;
