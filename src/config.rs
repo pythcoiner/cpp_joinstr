@@ -80,16 +80,18 @@ impl Config {
     }
 
     pub fn from_file(account: String) -> Self {
-        let mut path = Self::path(account);
+        let mut path = Self::path(account.clone());
         path.push("config.json");
 
-        if let Ok(mut file) = File::open(path) {
+        let mut conf = if let Ok(mut file) = File::open(path) {
             let mut content = String::new();
             let _ = file.read_to_string(&mut content);
             serde_json::from_str(&content).ok().unwrap_or_default()
         } else {
             Self::default()
-        }
+        };
+        conf.account = account;
+        conf
     }
 }
 

@@ -185,6 +185,7 @@ impl Account {
         config: Config,
         look_ahead: u32,
     ) -> Self {
+        assert!(!config.account.is_empty());
         let (sender, receiver) = mpsc::channel();
         // TODO: import saved state from local storage
         let coin_store = Arc::new(Mutex::new(CoinStore::new(
@@ -477,6 +478,7 @@ pub fn new_account(
     account: String,
 ) -> Box<Account> {
     let config = Config::from_file(account);
+    
     let account = Account::new((*mnemonic).into(), network.into(), config, 100);
     account.boxed()
 }
