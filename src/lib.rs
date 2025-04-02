@@ -93,9 +93,9 @@ pub mod cpp_joinstr {
         fn nostr_url(&self) -> String;
         fn nostr_back(&self) -> String;
         fn set_electrum_url(&mut self, url: String);
-        fn set_electrum_port(&mut self, port: u16);
+        fn set_electrum_port(&mut self, port: String);
         fn set_nostr_relay(&mut self, relay: String);
-        fn set_nostr_back(&mut self, back: u64);
+        fn set_nostr_back(&mut self, back: String);
         fn to_file(&self);
         fn config_from_file(account: String) -> Box<Config>;
     }

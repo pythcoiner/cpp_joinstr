@@ -113,14 +113,14 @@ impl Config {
     pub fn set_electrum_url(&mut self, url: String) {
         self.electrum_url = Some(url);
     }
-    pub fn set_electrum_port(&mut self, port: u16) {
-        self.electrum_port = Some(port);
+    pub fn set_electrum_port(&mut self, port: String) {
+        self.electrum_port = port.parse::<u16>().ok();
     }
     pub fn set_nostr_relay(&mut self, relay: String) {
         self.nostr_relay = Some(relay);
     }
-    pub fn set_nostr_back(&mut self, back: u64) {
-        self.nostr_back = Some(back);
+    pub fn set_nostr_back(&mut self, back: String) {
+        self.nostr_back = back.parse::<u64>().ok()
     }
     pub fn to_file(&self) {
         let mut path = Self::path(self.account.clone());
