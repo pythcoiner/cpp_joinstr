@@ -219,10 +219,10 @@ pub mod cpp_joinstr {
         fn try_recv(&mut self) -> Box<Poll>;
         fn relay(&self) -> String;
         fn new_addr(&mut self) -> Box<AddressEntry>;
-        fn set_electrum(&mut self, url: String, port: u16);
+        fn set_electrum(&mut self, url: String, port: String);
         fn start_electrum(&mut self);
         fn stop_electrum(&mut self);
-        fn set_nostr(&mut self, url: String, back: u64);
+        fn set_nostr(&mut self, url: String, back: String);
         fn start_nostr(&mut self);
         fn stop_nostr(&mut self);
 

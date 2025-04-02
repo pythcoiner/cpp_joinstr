@@ -77,6 +77,8 @@ pub enum Notification {
     Joinstr(PoolListenerNotif),
     AddressTipChanged,
     CoinUpdate,
+    InvalidElectrumConfig,
+    InvalidNostrConfig,
 }
 
 impl From<TxListenerNotif> for Notification {
@@ -115,6 +117,14 @@ impl Notification {
             },
             Notification::AddressTipChanged => signal.set(SignalFlag::AddressTipChanged),
             Notification::CoinUpdate => signal.set(SignalFlag::CoinUpdate),
+            Notification::InvalidElectrumConfig => {
+                signal.set(SignalFlag::AccountError);
+                signal.set_error("Invalid electrum config".to_string());
+            }
+            Notification::InvalidNostrConfig => {
+                signal.set(SignalFlag::AccountError);
+                signal.set_error("Invalid nostr config".to_string());
+            }
         }
         signal
     }
@@ -331,9 +341,16 @@ impl Account {
         todo!()
     }
 
-    pub fn set_electrum(&mut self, url: String, port: u16) {
-        self.config.electrum_url = Some(url);
-        self.config.electrum_port = Some(port);
+    pub fn set_electrum(&mut self, url: String, port: String) {
+        if let Ok(port) = port.parse::<u16>() {
+            self.config.electrum_url = Some(url);
+            self.config.electrum_port = Some(port);
+            self.config.to_file();
+        } else {
+            self.sender
+                .send(Notification::InvalidElectrumConfig)
+                .expect("cannot fail");
+        }
     }
 
     pub fn start_electrum(&mut self) {
@@ -355,9 +372,16 @@ impl Account {
         self.electrum_stop = None;
     }
 
-    pub fn set_nostr(&mut self, url: String, back: u64) {
-        self.config.nostr_relay = Some(url);
-        self.config.nostr_back = Some(back);
+    pub fn set_nostr(&mut self, url: String, back: String) {
+        if let Ok(back) = back.parse::<u64>() {
+            self.config.nostr_relay = Some(url);
+            self.config.nostr_back = Some(back);
+            self.config.to_file();
+        } else {
+            self.sender
+                .send(Notification::InvalidNostrConfig)
+                .expect("cannot fail");
+        }
     }
 
     pub fn start_nostr(&mut self) {
