@@ -7,6 +7,8 @@ use std::{
 use joinstr::miniscript::bitcoin;
 use serde::{Deserialize, Serialize};
 
+use crate::cpp_joinstr::Network;
+
 fn datadir() -> PathBuf {
     #[cfg(target_os = "linux")]
     let dir = {
@@ -120,6 +122,12 @@ impl Config {
     pub fn nostr_back(&self) -> String {
         self.nostr_back.map(|v| format!("{v}")).unwrap_or_default()
     }
+    pub fn look_ahead(&self) -> String {
+        self.look_ahead.to_string()
+    }
+    pub fn network(&self) -> Network {
+        self.network.into()
+    }
     pub fn set_electrum_url(&mut self, url: String) {
         self.electrum_url = Some(url);
         self.to_file();
@@ -134,6 +142,16 @@ impl Config {
     }
     pub fn set_nostr_back(&mut self, back: String) {
         self.nostr_back = back.parse::<u64>().ok();
+        self.to_file();
+    }
+    pub fn set_look_ahead(&mut self, look_ahead: String) {
+        if let Ok(la) = look_ahead.parse::<u32>() {
+            self.look_ahead = la;
+            self.to_file();
+        }
+    }
+    pub fn set_network(&mut self, network: Network) {
+        self.network = network.into();
         self.to_file();
     }
     pub fn to_file(&self) {
