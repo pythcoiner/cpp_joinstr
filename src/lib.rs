@@ -92,10 +92,14 @@ pub mod cpp_joinstr {
         fn electrum_port(&self) -> String;
         fn nostr_url(&self) -> String;
         fn nostr_back(&self) -> String;
+        fn look_ahead(&self) -> String;
+        fn network(&self) -> Network;
         fn set_electrum_url(&mut self, url: String);
         fn set_electrum_port(&mut self, port: String);
         fn set_nostr_relay(&mut self, relay: String);
         fn set_nostr_back(&mut self, back: String);
+        fn set_look_ahead(&mut self, look_ahead: String);
+        fn set_network(&mut self, network: Network);
         fn to_file(&self);
         fn config_from_file(account: String) -> Box<Config>;
     }
