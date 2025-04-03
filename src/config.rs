@@ -153,6 +153,8 @@ impl Config {
         maybe_create_dir(&path);
         path.push("config.json");
 
+        log::warn!("Config::to_file() {:?}", path);
+
         let mut file = File::create(path).unwrap();
         let content = serde_json::to_string_pretty(&self).unwrap();
         file.write_all(content.as_bytes()).unwrap();
