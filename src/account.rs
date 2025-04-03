@@ -376,7 +376,7 @@ impl Account {
             self.config.nostr_relay = Some(url);
             self.config.nostr_back = Some(back);
             self.config.to_file();
-        } else {
+        } else if !(url.is_empty() && back.is_empty()) {
             self.sender
                 .send(Notification::InvalidNostrConfig)
                 .expect("cannot fail");
