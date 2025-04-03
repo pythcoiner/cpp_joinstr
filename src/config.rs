@@ -130,29 +130,23 @@ impl Config {
     }
     pub fn set_electrum_url(&mut self, url: String) {
         self.electrum_url = Some(url);
-        self.to_file();
     }
     pub fn set_electrum_port(&mut self, port: String) {
         self.electrum_port = port.parse::<u16>().ok();
-        self.to_file();
     }
     pub fn set_nostr_relay(&mut self, relay: String) {
         self.nostr_relay = Some(relay);
-        self.to_file();
     }
     pub fn set_nostr_back(&mut self, back: String) {
         self.nostr_back = back.parse::<u64>().ok();
-        self.to_file();
     }
     pub fn set_look_ahead(&mut self, look_ahead: String) {
         if let Ok(la) = look_ahead.parse::<u32>() {
             self.look_ahead = la;
-            self.to_file();
         }
     }
     pub fn set_network(&mut self, network: Network) {
         self.network = network.into();
-        self.to_file();
     }
     pub fn to_file(&self) {
         let mut path = Self::path(self.account.clone());
