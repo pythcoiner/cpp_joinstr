@@ -79,6 +79,7 @@ pub enum Notification {
     CoinUpdate,
     InvalidElectrumConfig,
     InvalidNostrConfig,
+    InvalidLookAhead,
 }
 
 impl From<TxListenerNotif> for Notification {
@@ -124,6 +125,10 @@ impl Notification {
             Notification::InvalidNostrConfig => {
                 signal.set(SignalFlag::AccountError);
                 signal.set_error("Invalid nostr config".to_string());
+            }
+            Notification::InvalidLookAhead => {
+                signal.set(SignalFlag::AccountError);
+                signal.set_error("Invalid look_ahead value".to_string());
             }
         }
         signal
@@ -394,6 +399,17 @@ impl Account {
             stop.store(true, Ordering::Relaxed);
         }
         self.nostr_stop = None;
+    }
+
+    pub fn set_look_ahead(&mut self, look_ahead: String) {
+        if let Ok(la) = look_ahead.parse::<u32>() {
+            self.config.look_ahead = la;
+            self.config.to_file();
+        } else {
+            self.sender
+                .send(Notification::InvalidNostrConfig)
+                .expect("cannot fail");
+        }
     }
 
     pub fn get_config(&self) -> Box<Config> {
