@@ -4,6 +4,7 @@ use std::{
     path::PathBuf,
 };
 
+use joinstr::miniscript::bitcoin;
 use serde::{Deserialize, Serialize};
 
 fn datadir() -> PathBuf {
@@ -54,6 +55,8 @@ pub struct Config {
     pub nostr_relay: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nostr_back: Option<u64>,
+    pub network: bitcoin::Network,
+    pub look_ahead: u32,
 }
 
 impl Default for Config {
@@ -64,6 +67,8 @@ impl Default for Config {
             electrum_port: None,
             nostr_relay: None,
             nostr_back: None,
+            network: bitcoin::Network::Regtest,
+            look_ahead: 10,
         }
     }
 }

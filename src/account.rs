@@ -20,7 +20,7 @@ use joinstr::{
 use crate::{
     address_store::{AddressEntry, AddressTip},
     coin_store::{CoinEntry, CoinStore},
-    cpp_joinstr::{AddrAccount, AddressStatus, Network, PoolStatus, SignalFlag},
+    cpp_joinstr::{AddrAccount, AddressStatus, PoolStatus, SignalFlag},
     pool_store::PoolStore,
     result, Coins, Config, Mnemonic, Pool, Pools,
 };
@@ -174,27 +174,21 @@ pub struct Account {
     config: Config,
     electrum_stop: Option<Arc<AtomicBool>>,
     nostr_stop: Option<Arc<AtomicBool>>,
-    network: bitcoin::Network,
 }
 
 // Rust only interface
 impl Account {
-    pub fn new(
-        mnemonic: bip39::Mnemonic,
-        network: bitcoin::Network,
-        config: Config,
-        look_ahead: u32,
-    ) -> Self {
+    pub fn new(mnemonic: bip39::Mnemonic, config: Config) -> Self {
         assert!(!config.account.is_empty());
         let (sender, receiver) = mpsc::channel();
         // TODO: import saved state from local storage
         let coin_store = Arc::new(Mutex::new(CoinStore::new(
-            network,
+            config.network,
             mnemonic,
             sender.clone(),
             0,
             0,
-            look_ahead,
+            config.look_ahead,
         )));
         // TODO: use indexes from stored state
         let mut account = Account {
@@ -204,7 +198,6 @@ impl Account {
             pool_listener: None,
             electrum_stop: None,
             nostr_stop: None,
-            network,
             receiver,
             sender,
             config,
@@ -460,7 +453,7 @@ impl Account {
     pub fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32) {
         if let Some(nostr_relay) = &self.config.nostr_relay {
             let relay = nostr_relay.clone();
-            let network = self.network;
+            let network = self.config.network;
             thread::spawn(move || {
                 dummy_pool(relay, denomination, peers, timeout, fee, network);
             });
@@ -474,12 +467,11 @@ impl Account {
 
 pub fn new_account(
     #[allow(clippy::boxed_local)] mnemonic: Box<Mnemonic>,
-    network: Network,
     account: String,
 ) -> Box<Account> {
     let config = Config::from_file(account);
 
-    let account = Account::new((*mnemonic).into(), network.into(), config, 10);
+    let account = Account::new((*mnemonic).into(), config);
     account.boxed()
 }
 

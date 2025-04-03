@@ -227,7 +227,7 @@ pub mod cpp_joinstr {
         fn stop_nostr(&mut self);
         fn get_config(&self) -> Box<Config>;
 
-        fn new_account(mnemonic: Box<Mnemonic>, network: Network, account: String) -> Box<Account>;
+        fn new_account(mnemonic: Box<Mnemonic>, account: String) -> Box<Account>;
     }
 
     extern "Rust" {

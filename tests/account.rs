@@ -37,10 +37,16 @@ fn simple_wallet() {
     let look_ahead = 20;
 
     let mnemonic = Mnemonic::generate(12).unwrap();
-    let mut config = Config::default();
+    let mut config = Config {
+        network: Network::Regtest,
+        look_ahead,
+        ..Default::default()
+    };
+    config.network = Network::Regtest;
+    config.look_ahead = look_ahead;
     config.set_electrum_url(url);
     config.set_electrum_port(port.to_string());
-    let mut account = Account::new(mnemonic, Network::Regtest, config, look_ahead);
+    let mut account = Account::new(mnemonic, config);
     account.start_electrum();
     sleep(Duration::from_millis(300));
 
