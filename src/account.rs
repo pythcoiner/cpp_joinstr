@@ -402,6 +402,7 @@ impl Account {
     }
 
     pub fn set_look_ahead(&mut self, look_ahead: String) {
+        log::warn!("Account::set_look_ahead() {look_ahead}");
         if let Ok(la) = look_ahead.parse::<u32>() {
             self.config.look_ahead = la;
             self.config.to_file();
