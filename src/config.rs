@@ -187,6 +187,9 @@ impl Config {
     pub fn set_mnemonic(&mut self, mnemonic: String) {
         self.mnemonic = mnemonic;
     }
+    pub fn set_account(&mut self, name: String) {
+        self.account = name;
+    }
     pub fn to_file(&self) {
         let mut path = Self::path(self.account.clone());
         maybe_create_dir(&path);

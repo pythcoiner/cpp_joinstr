@@ -104,6 +104,7 @@ pub mod cpp_joinstr {
         fn to_file(&self);
         fn config_from_file(account: String) -> Box<Config>;
         fn config_exists(account: String) -> bool;
+        fn set_account(&mut self, name: String);
     }
 
     extern "Rust" {
