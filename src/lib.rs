@@ -43,6 +43,7 @@ pub mod cpp_joinstr {
         AddressTipChanged,
         CoinUpdate,
         AccountError,
+        Stopped,
     }
 
     extern "Rust" {
@@ -236,6 +237,7 @@ pub mod cpp_joinstr {
         fn set_look_ahead(&mut self, look_ahead: String);
         fn get_config(&self) -> Box<Config>;
         fn new_account(account: String) -> Box<Account>;
+        fn stop(&mut self);
     }
 
     extern "Rust" {

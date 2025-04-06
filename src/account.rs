@@ -81,6 +81,7 @@ pub enum Notification {
     InvalidElectrumConfig,
     InvalidNostrConfig,
     InvalidLookAhead,
+    Stopped,
 }
 
 impl From<TxListenerNotif> for Notification {
@@ -119,6 +120,7 @@ impl Notification {
             },
             Notification::AddressTipChanged => signal.set(SignalFlag::AddressTipChanged),
             Notification::CoinUpdate => signal.set(SignalFlag::CoinUpdate),
+            Notification::Stopped => signal.set(SignalFlag::Stopped),
             Notification::InvalidElectrumConfig => {
                 signal.set(SignalFlag::AccountError);
                 signal.set_error("Invalid electrum config".to_string());
@@ -481,6 +483,41 @@ impl Account {
 
     pub fn relay(&self) -> String {
         self.config.nostr_relay.clone().unwrap()
+    }
+
+    pub fn stop(&mut self) {
+        if self.electrum_stop.is_none() && self.nostr_stop.is_none() {
+            self.sender.send(Notification::Stopped).unwrap();
+            return;
+        }
+
+        if let Some(stopper) = &self.electrum_stop {
+            stopper.store(true, Ordering::Relaxed);
+        }
+        if let Some(stopper) = &self.nostr_stop {
+            stopper.store(true, Ordering::Relaxed);
+        }
+
+        let notification = self.sender.clone();
+        let tx_listener = self.tx_listener.take();
+        let pool_listener = self.pool_listener.take();
+
+        thread::spawn(move || loop {
+            let tx_stopped = if let Some(handle) = tx_listener.as_ref() {
+                handle.is_finished()
+            } else {
+                true
+            };
+            let pool_stopped = if let Some(handle) = pool_listener.as_ref() {
+                handle.is_finished()
+            } else {
+                true
+            };
+
+            if tx_stopped && pool_stopped {
+                notification.send(Notification::Stopped).unwrap();
+            }
+        });
     }
 }
 
