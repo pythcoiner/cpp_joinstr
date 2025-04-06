@@ -345,8 +345,9 @@ impl CoinStore {
 
         // FIXME: update statuses of those w/ CoinStatus::BeeingSpent
 
-        // TODO: do not unwrap
-        self.notification.send(Notification::CoinUpdate).unwrap();
+        if let Err(e) = self.notification.send(Notification::CoinUpdate) {
+            log::error!("CoinStore::generate() fail to send notification: {e:?}");
+        }
     }
 
     // Call by C++

@@ -51,9 +51,9 @@ impl AddressStore {
     }
 
     fn notify(&self) {
-        self.notification
-            .send(Notification::AddressTipChanged)
-            .unwrap();
+        if let Err(e) = self.notification.send(Notification::AddressTipChanged) {
+            log::error!("AddressStore::notify() fail to send notification: {e:?}");
+        }
         self.update_watch_tip();
     }
 
