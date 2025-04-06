@@ -18,3 +18,7 @@ impl From<Mnemonic> for bip39::Mnemonic {
         value.unwrap()
     }
 }
+
+pub fn generate_mnemonic() -> String {
+    bip39::Mnemonic::generate(12).unwrap().to_string()
+}

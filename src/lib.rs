@@ -15,7 +15,7 @@ use address_store::AddressEntry;
 use coin_store::CoinEntry;
 pub use config::{config_from_file, list_configs, Config};
 use joinstr::miniscript::bitcoin;
-pub use mnemonic::{mnemonic_from_string, Mnemonic};
+pub use mnemonic::{generate_mnemonic, mnemonic_from_string, Mnemonic};
 pub use pool::Pool;
 
 #[cxx::bridge]
@@ -140,6 +140,7 @@ pub mod cpp_joinstr {
         fn is_err(&self) -> bool;
         fn error(&self) -> String;
         fn mnemonic_from_string(value: String) -> Box<Mnemonic>;
+        fn generate_mnemonic() -> String;
     }
 
     extern "Rust" {
