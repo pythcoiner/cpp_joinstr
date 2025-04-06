@@ -100,6 +100,7 @@ pub mod cpp_joinstr {
         fn set_nostr_back(&mut self, back: String);
         fn set_look_ahead(&mut self, look_ahead: String);
         fn set_network(&mut self, network: Network);
+        fn set_mnemonic(&mut self, mnemonic: String);
         fn to_file(&self);
         fn config_from_file(account: String) -> Box<Config>;
     }
@@ -232,7 +233,7 @@ pub mod cpp_joinstr {
         fn set_look_ahead(&mut self, look_ahead: String);
         fn get_config(&self) -> Box<Config>;
 
-        fn new_account(mnemonic: Box<Mnemonic>, account: String) -> Box<Account>;
+        fn new_account(account: String) -> Box<Account>;
     }
 
     extern "Rust" {

@@ -46,7 +46,8 @@ fn simple_wallet() {
     config.look_ahead = look_ahead;
     config.set_electrum_url(url);
     config.set_electrum_port(port.to_string());
-    let mut account = Account::new(mnemonic, config);
+    config.set_mnemonic(mnemonic.to_string());
+    let mut account = Account::new(config);
     account.start_electrum();
     sleep(Duration::from_millis(300));
 

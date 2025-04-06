@@ -59,6 +59,7 @@ pub struct Config {
     pub nostr_back: Option<u64>,
     pub network: bitcoin::Network,
     pub look_ahead: u32,
+    pub mnemonic: String,
 }
 
 impl Default for Config {
@@ -71,6 +72,7 @@ impl Default for Config {
             nostr_back: None,
             network: bitcoin::Network::Regtest,
             look_ahead: 10,
+            mnemonic: String::new(),
         }
     }
 }
@@ -147,6 +149,9 @@ impl Config {
     }
     pub fn set_network(&mut self, network: Network) {
         self.network = network.into();
+    }
+    pub fn set_mnemonic(&mut self, mnemonic: String) {
+        self.mnemonic = mnemonic;
     }
     pub fn to_file(&self) {
         let mut path = Self::path(self.account.clone());

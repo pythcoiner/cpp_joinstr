@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
@@ -22,7 +23,7 @@ use crate::{
     coin_store::{CoinEntry, CoinStore},
     cpp_joinstr::{AddrAccount, AddressStatus, PoolStatus, SignalFlag},
     pool_store::PoolStore,
-    result, Coins, Config, Mnemonic, Pool, Pools,
+    result, Coins, Config, Pool, Pools,
 };
 
 result!(Poll, Signal);
@@ -183,8 +184,9 @@ pub struct Account {
 
 // Rust only interface
 impl Account {
-    pub fn new(mnemonic: bip39::Mnemonic, config: Config) -> Self {
+    pub fn new(config: Config) -> Self {
         assert!(!config.account.is_empty());
+        let mnemonic = bip39::Mnemonic::from_str(&config.mnemonic).unwrap();
         let (sender, receiver) = mpsc::channel();
         // TODO: import saved state from local storage
         let coin_store = Arc::new(Mutex::new(CoinStore::new(
@@ -482,13 +484,10 @@ impl Account {
     }
 }
 
-pub fn new_account(
-    #[allow(clippy::boxed_local)] mnemonic: Box<Mnemonic>,
-    account: String,
-) -> Box<Account> {
+pub fn new_account(account: String) -> Box<Account> {
     let config = Config::from_file(account);
 
-    let account = Account::new((*mnemonic).into(), config);
+    let account = Account::new(config);
     account.boxed()
 }
 
