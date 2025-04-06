@@ -1,13 +1,16 @@
 use std::{
-    fs::File,
+    fs::{self, File},
     io::{Read, Write},
     path::PathBuf,
+    str::FromStr,
 };
 
-use joinstr::miniscript::bitcoin;
+use joinstr::{bip39::Mnemonic, miniscript::bitcoin};
 use serde::{Deserialize, Serialize};
 
 use crate::cpp_joinstr::Network;
+
+const CONFIG_FILENAME: &str = "config.json";
 
 fn datadir() -> PathBuf {
     #[cfg(target_os = "linux")]
@@ -77,6 +80,28 @@ impl Default for Config {
     }
 }
 
+pub fn list_configs() -> Vec<String> {
+    let path = datadir();
+    let mut out = vec![];
+    if let Ok(folders) = fs::read_dir(path) {
+        folders.for_each(|account| {
+            if let Ok(entry) = account {
+                if let Ok(md) = entry.metadata() {
+                    if md.is_dir() {
+                        let acc_name = entry.file_name().to_str().unwrap().to_string();
+                        let parsed = Config::from_file(acc_name.clone());
+                        if !parsed.account.is_empty() {
+                            out.push(acc_name);
+                        }
+                    };
+                }
+            }
+        });
+    }
+
+    out
+}
+
 impl Config {
     pub fn path(account: String) -> PathBuf {
         let mut dir = datadir();
@@ -90,7 +115,7 @@ impl Config {
 
     pub fn from_file(account: String) -> Self {
         let mut path = Self::path(account.clone());
-        path.push("config.json");
+        path.push(CONFIG_FILENAME);
 
         let mut conf = if let Ok(mut file) = File::open(path) {
             let mut content = String::new();
@@ -99,7 +124,10 @@ impl Config {
         } else {
             Self::default()
         };
-        conf.account = account;
+        let mnemo = Mnemonic::from_str(&conf.mnemonic);
+        if mnemo.is_ok() {
+            conf.account = account;
+        }
         conf
     }
 }
@@ -156,7 +184,7 @@ impl Config {
     pub fn to_file(&self) {
         let mut path = Self::path(self.account.clone());
         maybe_create_dir(&path);
-        path.push("config.json");
+        path.push(CONFIG_FILENAME);
 
         log::warn!("Config::to_file() {:?}", path);
 

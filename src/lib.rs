@@ -13,7 +13,7 @@ use std::fmt::Display;
 use account::{new_account, Account, Poll, Signal};
 use address_store::AddressEntry;
 use coin_store::CoinEntry;
-pub use config::{config_from_file, Config};
+pub use config::{config_from_file, list_configs, Config};
 use joinstr::miniscript::bitcoin;
 pub use mnemonic::{mnemonic_from_string, Mnemonic};
 pub use pool::Pool;
@@ -232,12 +232,15 @@ pub mod cpp_joinstr {
         fn stop_nostr(&mut self);
         fn set_look_ahead(&mut self, look_ahead: String);
         fn get_config(&self) -> Box<Config>;
-
         fn new_account(account: String) -> Box<Account>;
     }
 
     extern "Rust" {
         fn init_rust_logger(level: LogLevel);
+    }
+
+    extern "Rust" {
+        fn list_configs() -> Vec<String>;
     }
 }
 
