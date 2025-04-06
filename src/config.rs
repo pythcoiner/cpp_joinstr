@@ -102,6 +102,12 @@ pub fn list_configs() -> Vec<String> {
     out
 }
 
+pub fn config_exists(account: String) -> bool {
+    let mut path = Config::path(account.clone());
+    path.push(CONFIG_FILENAME);
+    path.exists()
+}
+
 impl Config {
     pub fn path(account: String) -> PathBuf {
         let mut dir = datadir();

@@ -13,7 +13,7 @@ use std::fmt::Display;
 use account::{new_account, Account, Poll, Signal};
 use address_store::AddressEntry;
 use coin_store::CoinEntry;
-pub use config::{config_from_file, list_configs, Config};
+pub use config::{config_exists, config_from_file, list_configs, Config};
 use joinstr::miniscript::bitcoin;
 pub use mnemonic::{generate_mnemonic, mnemonic_from_string, Mnemonic};
 pub use pool::Pool;
@@ -103,6 +103,7 @@ pub mod cpp_joinstr {
         fn set_mnemonic(&mut self, mnemonic: String);
         fn to_file(&self);
         fn config_from_file(account: String) -> Box<Config>;
+        fn config_exists(account: String) -> bool;
     }
 
     extern "Rust" {
