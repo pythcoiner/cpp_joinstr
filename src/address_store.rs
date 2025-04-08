@@ -33,8 +33,8 @@ pub struct AddressTip {
 /// - `recv_generated_tip`: Last generated receiving address index.
 /// - `change_generated_tip`: Last generated change address index.
 /// - `signer`: Signer used to generate new addresses.
-/// - `notification`: Channel for sending notifications about address 
-/// tips changes.
+/// - `notification`: Channel for sending notifications about address
+///   tips changes.
 /// - `tx_poller`: Optional channel for sending address tip changes.
 /// - `look_ahead`: Number of addresses to generate ahead of the current tip.
 pub struct AddressStore {
@@ -52,12 +52,12 @@ impl AddressStore {
     ///
     /// # Parameters
     /// - `signer`: The signer used to generate new addresses.
-    /// - `notification`: A channel for sending notifications about address 
-    /// tip changes.
+    /// - `notification`: A channel for sending notifications about address
+    ///   tip changes.
     /// - `recv_tip`: The initial index for receiving address generation.
     /// - `change_tip`: The initial index for change address generation.
-    /// - `look_ahead`: The number of addresses to generate ahead of the 
-    /// current tip.
+    /// - `look_ahead`: The number of addresses to generate ahead of the
+    ///   current tip.
     ///
     /// # Returns
     /// A new instance of `AddressStore`.
@@ -228,7 +228,7 @@ impl AddressStore {
 
     /// Initializes the address store with a transaction poller.
     ///
-    /// This method populates the address store and sets the transaction 
+    /// This method populates the address store and sets the transaction
     /// poller channel.
     ///
     /// # Parameters
@@ -266,11 +266,10 @@ impl AddressStore {
 
     /// Retrieves all unused receiving addresses.
     ///
-    /// This method filters the address store for addresses that are not 
+    /// This method filters the address store for addresses that are not
     /// used and belong to the receiving account.
     ///
     /// # Returns
-
     /// An `Addresses` object containing all unused receiving addresses.
     pub fn get_unused(&self) -> Addresses {
         let mut out = Addresses::new();
@@ -301,7 +300,7 @@ impl AddressStore {
     /// - `account`: The account type (receiving or change).
     ///
     /// # Returns
-    /// An `Addresses` object containing all addresses for the specified 
+    /// An `Addresses` object containing all addresses for the specified
     /// account type.
     pub fn get(&self, account: AddrAccount) -> Addresses {
         let mut out = Addresses::new();
@@ -329,7 +328,7 @@ impl AddressStore {
     /// Dumps the address store as a JSON value.
     ///
     /// # Returns
-    /// A `Result` containing the serialized JSON value of the address store 
+    /// A `Result` containing the serialized JSON value of the address store
     /// or an error if serialization fails.
     pub fn dump(&self) -> Result<serde_json::Value, serde_json::Error> {
         serde_json::to_value(&self.store)
