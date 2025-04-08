@@ -18,10 +18,13 @@ use crate::{
 };
 
 #[derive(Debug)]
+/// Represents a store for managing coins and their associated data.
+///
+/// The `CoinStore` is generated from the transaction store after every 
+/// TxStore update and acts as a cache for coins. It maintains mappings 
+/// of outpoints to coin entries and tracks the history of script public 
+/// keys (SPKs).
 pub struct CoinStore {
-    // the coin store is always generated from the tx store
-    // it's only a "coin cache" as the source of truth is
-    // the tx store
     store: BTreeMap<OutPoint, CoinEntry>,
     spk_to_outpoint: BTreeMap<ScriptBuf, HashSet<OutPoint>>,
     address_store: AddressStore,
@@ -33,11 +36,19 @@ pub struct CoinStore {
 }
 
 #[derive(Debug, Default)]
+/// Represents the history of transactions for a specific script public key (SPK).
+///
+/// The `SpkHistory` stores a history of txids and their associated
+/// heights, allowing for tracking incremental changes over time.
 pub struct SpkHistory {
     history: Vec<BTreeMap<bitcoin::Txid, Option<u64>>>,
 }
 
 #[derive(Debug, Default)]
+/// Represents the differences in transaction history for a script public key.
+///
+/// The `HistoryDiff` struct contains the added, changed, and removed
+/// transactions, allowing for easy tracking of updates to the SPK history.
 pub struct HistoryDiff {
     pub added: BTreeMap<bitcoin::Txid, Option<u64>>,
     pub changed: BTreeMap<bitcoin::Txid, Option<u64>>,
@@ -45,9 +56,17 @@ pub struct HistoryDiff {
 }
 
 impl SpkHistory {
+    /// Creates a new instance of `SpkHistory`.
+    ///
+    /// This method initializes the history with default values.
     pub fn new() -> Self {
         Self::default()
     }
+    /// Inserts new transaction data into the SPK history and returns the differences.
+    ///
+    /// This method compares the new transaction data with the existing history
+    /// and returns a `HistoryDiff` struct indicating added, changed, and removed
+    /// transactions.
     pub fn insert(&mut self, new: Vec<(bitcoin::Txid, Option<u64>)>) -> HistoryDiff {
         let new: BTreeMap<_, _> = new.into_iter().collect();
         let diff = if self.history.is_empty() {
@@ -82,6 +101,18 @@ impl SpkHistory {
 }
 
 impl CoinStore {
+    /// Creates a new instance of `CoinStore`.
+    ///
+    /// # Parameters
+    /// - `network`: The Bitcoin network to use.
+    /// - `mnemonic`: The mnemonic phrase for generating keys.
+    /// - `notification`: Channel for sending notifications about updates.
+    /// - `recv_tip`: Initial index for receiving address generation.
+    /// - `change_tip`: Initial index for change address generation.
+    /// - `look_ahead`: Number of addresses to generate ahead of the current tip.
+    ///
+    /// # Returns
+    /// A new instance of `CoinStore`.
     pub fn new(
         network: bitcoin::Network,
         mnemonic: bip39::Mnemonic,
@@ -112,39 +143,85 @@ impl CoinStore {
         }
     }
 
+    /// Initializes the address store with a channel to the tx listener.
+    ///
+    /// This method sets up the address store to send updates to the
+    /// specified transaction listener.
     pub fn init(&mut self, tx_poller: mpsc::Sender<AddressTip>) {
         self.address_store.init(tx_poller);
     }
+    /// Returns a clone of the signer used for generating addresses.
+    ///
+    /// # Returns
+    /// A `WpkhHotSigner` instance.
     pub fn signer(&self) -> WpkhHotSigner {
         self.signer.clone()
     }
+    /// Returns a reference to the signer used for generating addresses.
+    ///
+    /// # Returns
+    /// A reference to a `WpkhHotSigner`.
     pub fn signer_ref(&self) -> &WpkhHotSigner {
         &self.signer
     }
+    /// Returns the current receiving watch tip index.
+    ///
+    /// # Returns
+    /// The index of the last generated receiving address.
     pub fn recv_watch_tip(&self) -> u32 {
         self.address_store.recv_watch_tip()
     }
 
+    /// Returns the current change watch tip index.
+    ///
+    /// # Returns
+    /// The index of the last generated change address.
     pub fn change_watch_tip(&self) -> u32 {
         self.address_store.change_watch_tip()
     }
 
+    /// Generates a new receiving address.
+    ///
+    /// # Returns
+    /// A new `bitcoin::Address` for receiving funds.
     pub fn new_recv_addr(&mut self) -> bitcoin::Address {
         self.address_store.new_recv_addr()
     }
 
+    /// Returns the current receiving address tip index.
+    ///
+    /// # Returns
+    /// The index of the last generated receiving address.
     pub fn recv_tip(&self) -> u32 {
         self.address_store.recv_tip()
     }
 
+    /// Generates a new change address.
+    ///
+    /// # Returns
+    /// A new `bitcoin::Address` for change outputs.
     pub fn new_change_addr(&mut self) -> bitcoin::Address {
         self.address_store.new_change_addr()
     }
 
+    /// Processes a received coin at the specified script public key.
+    ///
+    /// # Parameters
+    /// - `spk`: The script public key of the received coin.
     pub fn recv_coin_at(&mut self, spk: &ScriptBuf) {
         self.address_store.recv_coin_at(spk);
     }
 
+    /// Handles the response containing transaction history for SPKs.
+    ///
+    /// This method processes the history and updates the internal state of the
+    /// `CoinStore`. It returns a list of transaction IDs that are missing.
+    ///
+    /// # Parameters
+    /// - `hist`: A map of script public keys to their transaction history.
+    ///
+    /// # Returns
+    /// A vector of `Txid` representing missing transactions.
     pub fn handle_history_response(
         &mut self,
         hist: BTreeMap<ScriptBuf, Vec<(bitcoin::Txid, Option<u64>)>>,
@@ -195,7 +272,19 @@ impl CoinStore {
         txids
     }
 
-    // triggered on history_get response
+    /// Updates the history for a specific script public key (SPK).
+    ///
+    /// This method generates a diff of the SPK history and updates the
+    /// transaction store accordingly.
+    ///
+    /// # Parameters
+    /// - `spk`: The script public key to update.
+    /// - `history`: The new transaction history for the SPK.
+    ///
+    /// # Returns
+    /// An `Update` representing the changes made to the SPK history.
+    ///
+    /// Note: triggered on history_get response
     pub fn update_spk_history(
         &mut self,
         spk: ScriptBuf,
@@ -227,6 +316,14 @@ impl CoinStore {
         Update::from_diff(spk, diff)
     }
 
+    /// Handles the response containing transactions.
+    ///
+    /// This method processes the received transactions and updates the
+    /// internal state of the `CoinStore`. It regenerates the coin store
+    /// from the transaction store.
+    ///
+    /// # Parameters
+    /// - `txs`: A vector of Bitcoin transactions received.
     pub fn handle_txs_response(&mut self, txs: Vec<bitcoin::Transaction>) {
         // iter over updates & fill where the transaction is requested
         for new_tx in txs {
@@ -261,7 +358,11 @@ impl CoinStore {
         self.generate();
     }
 
-    // generate from tx_store
+    /// Generates the coin store from the transaction store.
+    ///
+    /// This method populates the coin store with coins based on the
+    /// transactions in the transaction store and updates the address
+    /// statuses accordingly.
     pub fn generate(&mut self) {
         let addr_store = &mut self.address_store;
         let tx_store = &self.tx_store;
@@ -350,7 +451,16 @@ impl CoinStore {
         }
     }
 
-    // Call by C++
+    /// Retrieves coins by their status.
+    ///
+    /// This method filters the coins in the store based on the specified
+    /// status and returns them as a `Coins` object.
+    ///
+    /// # Parameters
+    /// - `status`: The status of the coins to retrieve.
+    ///
+    /// # Returns
+    /// A `Coins` object containing the filtered coins.
     pub fn get_by_status(&self, status: CoinStatus) -> Coins {
         let mut out = Coins::new();
         let coins = self
@@ -369,7 +479,13 @@ impl CoinStore {
         out
     }
 
-    // Call by C++
+    /// Retrieves spendable coins from the store.
+    ///
+    /// This method filters the coins that are either unconfirmed or
+    /// confirmed and returns them as a `Coins` object.
+    ///
+    /// # Returns
+    /// A `Coins` object containing the spendable coins.
     pub fn spendable_coins(&self) -> Coins {
         let mut out = Coins::new();
         let coins = self
@@ -386,14 +502,30 @@ impl CoinStore {
         out
     }
 
+    /// Returns all coins in the store.
+    ///
+    /// # Returns
+    /// A `BTreeMap` of outpoints to their corresponding `CoinEntry`.
     pub fn coins(&self) -> BTreeMap<bitcoin::OutPoint, CoinEntry> {
         self.store.clone()
     }
 
+    /// Dumps the coin store as a JSON value.
+    ///
+    /// # Returns
+    /// A `Result` containing the serialized JSON value of the coin store
+    /// or an error if serialization fails.
     pub fn dump(&self) -> Result<serde_json::Value, serde_json::Error> {
         serde_json::to_value(&self.store)
     }
 
+    /// Restores the coin store from a JSON value.
+    ///
+    /// # Parameters
+    /// - `value`: The JSON value to restore the coin store from.
+    ///
+    /// # Returns
+    /// A `Result` indicating success or failure of the restoration.
     pub fn restore(&mut self, value: serde_json::Value) -> Result<(), serde_json::Error> {
         self.store = serde_json::from_value(value)?;
         Ok(())
@@ -401,6 +533,10 @@ impl CoinStore {
 }
 
 #[derive(Debug, Clone)]
+/// Represents an update to the transaction history for a script public key (SPK).
+///
+/// The `Update` struct contains the script public key and a list of
+/// transactions that have been added or changed.
 pub struct Update {
     #[allow(unused)]
     spk: ScriptBuf,
@@ -408,6 +544,14 @@ pub struct Update {
 }
 
 impl Update {
+    /// Creates an `Update` from the differences in SPK history.
+    ///
+    /// # Parameters
+    /// - `spk`: The script public key associated with the update.
+    /// - `diff`: The differences in the SPK history.
+    ///
+    /// # Returns
+    /// A new `Update` instance.
     pub fn from_diff(spk: ScriptBuf, diff: HistoryDiff) -> Self {
         Update {
             spk,
@@ -419,10 +563,21 @@ impl Update {
         }
     }
 
+    /// Checks if the update is complete.
+    ///
+    /// An update is considered complete if all transactions have been
+    /// received.
+    ///
+    /// # Returns
+    /// `true` if the update is complete, otherwise `false`.
     pub fn is_complete(&self) -> bool {
         self.txs.iter().all(|(_, tx, _)| tx.is_some())
     }
 
+    /// Returns a list of missing transaction IDs in the update.
+    ///
+    /// # Returns
+    /// A vector of `Txid` representing transactions that are missing.
     pub fn missing(&self) -> Vec<Txid> {
         self.txs
             .iter()
@@ -432,6 +587,10 @@ impl Update {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Represents a coin entry in the coin store.
+///
+/// The `CoinEntry` struct contains information about the coin's height,
+/// status, associated coin data, and the address it belongs to.
 pub struct CoinEntry {
     height: Option<u64>,
     status: CoinStatus,
@@ -440,30 +599,66 @@ pub struct CoinEntry {
 }
 
 impl CoinEntry {
+    /// Returns the status of the coin.
+    ///
+    /// # Returns
+    /// The `CoinStatus` of the coin.
     pub fn status(&self) -> CoinStatus {
         self.status
     }
+    /// Returns a string representation of the coin's status.
+    ///
+    /// # Returns
+    /// A string describing the coin's status.
     pub fn status_str(&self) -> String {
         format!("{:?}", self.status)
     }
+    /// Returns the amount of the coin in satoshis.
+    ///
+    /// # Returns
+    /// The value of the coin in satoshis.
     pub fn amount_sat(&self) -> u64 {
         self.coin.txout.value.to_sat()
     }
+    /// Returns the amount of the coin in Bitcoin.
+    ///
+    /// # Returns
+    /// The value of the coin in Bitcoin.
     pub fn amount_btc(&self) -> f64 {
         self.coin.txout.value.to_btc()
     }
+    /// Returns a reference to the coin's outpoint.
+    ///
+    /// # Returns
+    /// A reference to the `OutPoint` of the coin.
     pub fn outpoint(&self) -> &OutPoint {
         &self.coin.outpoint
     }
+    /// Returns a string representation of the coin's outpoint.
+    ///
+    /// # Returns
+    /// A string describing the coin's outpoint.
     pub fn outpoint_str(&self) -> String {
         self.outpoint().to_string()
     }
+    /// Returns a boxed version of the coin entry.
+    ///
+    /// # Returns
+    /// A `Box` containing the coin entry.
     pub fn boxed(&self) -> Box<CoinEntry> {
         Box::new(self.clone())
     }
+    /// Returns the address associated with the coin.
+    ///
+    /// # Returns
+    /// A string representation of the coin's address.
     pub fn address(&self) -> String {
         self.address.clone().assume_checked().to_string()
     }
+    /// Returns the script public key (SPK) associated with the coin.
+    ///
+    /// # Returns
+    /// The `ScriptBuf` representing the coin's SPK.
     pub fn spk(&self) -> ScriptBuf {
         self.address.clone().assume_checked().script_pubkey()
     }
