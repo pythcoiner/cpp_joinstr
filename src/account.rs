@@ -841,7 +841,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
         // listen for AddressTip update
         match address_tip.try_recv() {
             Ok(tip) => {
-                log::debug!("tx_poller() receive {tip:?}");
+                log::debug!("listen_txs() receive {tip:?}");
                 let AddressTip { recv, change } = tip;
                 received = true;
                 let mut sub = vec![];
@@ -890,7 +890,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
         // listen for response
         match response.try_recv() {
             Ok(rsp) => {
-                log::debug!("tx_poller() receive {rsp:#?}");
+                log::debug!("listen_txs() receive {rsp:#?}");
                 received = true;
                 match rsp {
                     CoinResponse::Status(elct_status) => {
@@ -907,12 +907,9 @@ fn listen_txs<T: From<TxListenerNotif>>(
                             }
                         }
                         if !history.is_empty() {
-                            send_electrum!(
-                                request,
-                                notification,
-                                stop,
-                                CoinRequest::History(history)
-                            );
+                            let hist = CoinRequest::History(history);
+                            log::debug!("listen_txs() send {:#?}", hist);
+                            send_electrum!(request, notification, stop, hist);
                         }
                     }
                     CoinResponse::History(map) => {

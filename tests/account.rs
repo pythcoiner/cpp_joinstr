@@ -26,13 +26,30 @@ pub fn setup_logger() {
     });
 }
 
+pub fn wait_until_timeout<F>(condition: F, timeout: u64)
+where
+    F: Fn() -> bool,
+{
+    let delay = Duration::from_millis(100);
+    let start_time = std::time::Instant::now();
+
+    while start_time.elapsed().as_secs() < timeout {
+        if condition() {
+            return;
+        }
+        sleep(delay);
+    }
+    panic!("Timeout elapsed while waiting for condition.");
+}
+
 #[test]
 fn simple_wallet() {
     setup_logger();
     let (url, port, _electrsd, bitcoind) = bootstrap_electrs();
     generate(&bitcoind, 100);
 
-    sleep(Duration::from_millis(2000));
+    const TIMEOUT: u64 = 5;
+    const BLOCKS: u32 = 1;
 
     let look_ahead = 20;
 
@@ -51,46 +68,90 @@ fn simple_wallet() {
     account.start_electrum();
     sleep(Duration::from_millis(300));
 
-    // normal receive flow
-    let addr = account.new_recv_addr();
+    let recv_addr = account.new_recv_addr();
+    let change_addr = account.new_change_addr();
 
-    send_to_address(&bitcoind, &addr, Amount::from_btc(0.1).unwrap());
-    generate(&bitcoind, 10);
-    sleep(Duration::from_millis(600));
-    let coins = account.coins();
-    assert_eq!(coins.len(), 1);
+    send_to_address(&bitcoind, &recv_addr, Amount::from_btc(0.1).unwrap());
+    generate(&bitcoind, BLOCKS);
+    wait_until_timeout(
+        || {
+            let coins = account.coins();
+            coins.len() == 1
+        },
+        TIMEOUT,
+    );
+
+    // Test change address
+    send_to_address(&bitcoind, &change_addr, Amount::from_btc(0.1).unwrap());
+    generate(&bitcoind, BLOCKS);
+    wait_until_timeout(
+        || {
+            let coins = account.coins();
+            coins.len() == 2
+        },
+        TIMEOUT,
+    );
 
     // receive at look_ahead bound
-    let addr = account.recv_at(look_ahead);
-    send_to_address(&bitcoind, &addr, Amount::from_btc(0.1).unwrap());
-    generate(&bitcoind, 10);
-    sleep(Duration::from_millis(600));
-    let coins = account.coins();
-    // the coin is detected
-    assert_eq!(coins.len(), 2);
+    let recv_addr = account.recv_at(look_ahead);
+    send_to_address(&bitcoind, &recv_addr, Amount::from_btc(0.1).unwrap());
+    generate(&bitcoind, BLOCKS);
+    wait_until_timeout(
+        || {
+            let coins = account.coins();
+            coins.len() == 3
+        },
+        TIMEOUT,
+    );
+
+    // change at look_ahead bound
+    let change_addr = account.change_at(look_ahead);
+    send_to_address(&bitcoind, &change_addr, Amount::from_btc(0.1).unwrap());
+    generate(&bitcoind, BLOCKS);
+    wait_until_timeout(
+        || {
+            let coins = account.coins();
+            coins.len() == 4
+        },
+        TIMEOUT,
+    );
 
     let undiscovered_tip = account.recv_watch_tip() + 1;
+
     // receive beyond the look_ahead bound
-    let addr = account.recv_at(undiscovered_tip);
-    send_to_address(&bitcoind, &addr, Amount::from_btc(0.1).unwrap());
-    generate(&bitcoind, 10);
-    sleep(Duration::from_millis(600));
+    let recv_addr = account.recv_at(undiscovered_tip);
+    send_to_address(&bitcoind, &recv_addr, Amount::from_btc(0.1).unwrap());
+    generate(&bitcoind, BLOCKS);
     let coins = account.coins();
-    // the coin is not detected
-    assert_eq!(coins.len(), 2);
+    // the coin is not detected for receiving address
+    assert_eq!(coins.len(), 4);
+
+    // change beyond the look_ahead bound
+    let change_addr = account.change_at(undiscovered_tip);
+    send_to_address(&bitcoind, &change_addr, Amount::from_btc(0.1).unwrap());
+    generate(&bitcoind, BLOCKS);
+    let coins = account.coins();
+    // the coin is not detected for change address
+    assert_eq!(coins.len(), 4);
 
     // move the watch tip forward
     account.new_recv_addr();
-    let watch_tip = account.recv_watch_tip();
-    log::error!("watch_tip: {watch_tip}");
-    sleep(Duration::from_millis(600));
-
     account.new_recv_addr();
-    let watch_tip = account.recv_watch_tip();
-    log::error!("watch_tip: {watch_tip}");
+    wait_until_timeout(
+        || {
+            let coins = account.coins();
+            coins.len() == 5
+        },
+        TIMEOUT,
+    );
 
-    sleep(Duration::from_millis(600));
-    let coins = account.coins();
-    // now the coin is detected
-    assert_eq!(coins.len(), 3);
+    account.new_change_addr();
+    account.new_change_addr();
+    wait_until_timeout(
+        || {
+            let coins = account.coins();
+            coins.len() == 6
+        },
+        TIMEOUT,
+    );
 }
