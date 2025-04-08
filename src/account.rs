@@ -28,38 +28,75 @@ use crate::{
 
 result!(Poll, Signal);
 
+/// Represents a signal that can either contain a value or an error message, emulating a Result type through bindings to C++.
 #[derive(Default, Clone)]
 pub struct Signal {
     inner: Option<SignalFlag>,
     error: Option<String>,
 }
 impl Signal {
+    /// Creates a new `Signal` instance with no inner value or error.
     pub fn new() -> Self {
         Self {
             inner: None,
             error: None,
         }
     }
+    /// Sets the inner value of the signal and clears any existing error.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The `SignalFlag` to set as the inner value.
     pub fn set(&mut self, value: SignalFlag) {
         self.inner = Some(value);
         self.error = None;
     }
+    /// Sets an error message for the signal and clears any existing inner value.
+    ///
+    /// # Arguments
+    ///
+    /// * `error` - The error message to set.
     pub fn set_error(&mut self, error: String) {
         self.error = Some(error);
         self.inner = None;
     }
+    /// Unwraps the inner value of the signal, assuming it is present.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the inner value is not present.
     pub fn unwrap(&self) -> SignalFlag {
         self.inner.unwrap()
     }
+    /// Returns a boxed version of the inner value of the signal.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the inner value is not present.
     pub fn boxed(&self) -> Box<SignalFlag> {
         Box::new(self.inner.unwrap())
     }
+    /// Returns the error message of the signal, if any.
+    ///
+    /// # Returns
+    ///
+    /// A string containing the error message, or an empty string if no error is present.
     pub fn error(&self) -> String {
         self.error.clone().unwrap_or_default()
     }
+    /// Checks if the signal is in an "ok" state, meaning it has an inner value and no error.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the signal is ok, `false` otherwise.
     pub fn is_ok(&self) -> bool {
         self.inner.is_some() && self.error.is_none()
     }
+    /// Checks if the signal is in an error state.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the signal is in an error state, `false` otherwise.
     pub fn is_err(&self) -> bool {
         let err = matches!(
             self.inner,
@@ -72,6 +109,7 @@ impl Signal {
     }
 }
 
+/// Represents different types of errors that can occur.
 #[derive(Debug)]
 pub enum Notification {
     Electrum(TxListenerNotif),
@@ -97,6 +135,11 @@ impl From<PoolListenerNotif> for Notification {
 }
 
 impl Notification {
+    /// Converts a `Notification` into a `Signal`.
+    ///
+    /// # Returns
+    ///
+    /// A `Signal` representing the notification.
     pub fn to_signal(self) -> Signal {
         let mut signal = Signal::new();
         match self {
@@ -149,6 +192,7 @@ impl From<nostr::error::Error> for Error {
     }
 }
 
+/// Represents notifications related to transaction listeners.
 #[derive(Debug, Clone)]
 pub enum TxListenerNotif {
     Started,
@@ -186,6 +230,15 @@ pub struct Account {
 
 // Rust only interface
 impl Account {
+    /// Creates a new `Account` instance with the given configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The configuration for the account.
+    ///
+    /// # Returns
+    ///
+    /// A new `Account` instance.
     pub fn new(config: Config) -> Self {
         assert!(!config.account.is_empty());
         let mnemonic = bip39::Mnemonic::from_str(&config.mnemonic).unwrap();
@@ -216,10 +269,25 @@ impl Account {
         account
     }
 
+    /// Returns a boxed version of the account.
+    ///
+    /// # Returns
+    ///
+    /// A boxed `Account` instance.
     fn boxed(self) -> Box<Self> {
         Box::new(self)
     }
 
+    /// Starts listening for transactions on the specified address and port.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - The address to listen on.
+    /// * `port` - The port to listen on.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing a sender for address tips and a stop flag.
     fn start_listen_txs(
         &mut self,
         addr: String,
@@ -247,6 +315,16 @@ impl Account {
         (sender, stop)
     }
 
+    /// Starts polling pools with the specified parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `back` - The number of seconds in the past event publish date to retrieve.
+    /// * `relay` - The relay address to connect to.
+    ///
+    /// # Returns
+    ///
+    /// A stop flag for the polling process.
     fn start_poll_pools(&mut self, back: u64, relay: String) -> Arc<AtomicBool> {
         log::debug!("Account::start_poll_pools()");
         let pool_store = self.pool_store.clone();
@@ -261,14 +339,33 @@ impl Account {
         stop
     }
 
+    /// Returns the signer associated with the account.
+    ///
+    /// # Returns
+    ///
+    /// A `WpkhHotSigner` instance.
     pub fn signer(&self) -> WpkhHotSigner {
         self.coin_store.lock().expect("poisoned").signer()
     }
 
+    /// Returns a map of coins associated with the account.
+    ///
+    /// # Returns
+    ///
+    /// A `BTreeMap` of `OutPoint` to `CoinEntry`.
     pub fn coins(&self) -> BTreeMap<OutPoint, CoinEntry> {
         self.coin_store.lock().expect("poisoned").coins()
     }
 
+    /// Returns the receiving address at the specified index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the receiving address.
+    ///
+    /// # Returns
+    ///
+    /// A `bitcoin::Address` instance.
     pub fn recv_at(&self, index: u32) -> bitcoin::Address {
         self.coin_store
             .lock()
@@ -277,6 +374,15 @@ impl Account {
             .recv_addr_at(index)
     }
 
+    /// Returns the change address at the specified index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the change address.
+    ///
+    /// # Returns
+    ///
+    /// A `bitcoin::Address` instance.
     pub fn change_at(&self, index: u32) -> bitcoin::Address {
         self.coin_store
             .lock()
@@ -285,17 +391,37 @@ impl Account {
             .change_addr_at(index)
     }
 
+    /// Generates a new receiving address for the account.
+    ///
+    /// # Returns
+    ///
+    /// A `bitcoin::Address` instance.
     pub fn new_recv_addr(&mut self) -> bitcoin::Address {
         self.coin_store.lock().expect("poisoned").new_recv_addr()
     }
+    /// Generates a new change address for the account.
+    ///
+    /// # Returns
+    ///
+    /// A `bitcoin::Address` instance.
     pub fn new_change_addr(&mut self) -> bitcoin::Address {
         self.coin_store.lock().expect("poisoned").new_change_addr()
     }
 
+    /// Returns the current receiving watch tip index.
+    ///
+    /// # Returns
+    ///
+    /// The receiving watch tip index as a `u32`.
     pub fn recv_watch_tip(&self) -> u32 {
         self.coin_store.lock().expect("poisoned").recv_watch_tip()
     }
 
+    /// Returns the current change watch tip index.
+    ///
+    /// # Returns
+    ///
+    /// The change watch tip index as a `u32`.
     pub fn change_watch_tip(&self) -> u32 {
         self.coin_store.lock().expect("poisoned").change_watch_tip()
     }
@@ -303,6 +429,11 @@ impl Account {
 
 // C++ shared interface
 impl Account {
+    /// Returns the spendable coins for the account.
+    ///
+    /// # Returns
+    ///
+    /// A boxed `Coins` instance containing the spendable coins.
     pub fn spendable_coins(&self) -> Box<Coins> {
         match self.coin_store.try_lock() {
             Ok(lock) => Box::new(lock.spendable_coins()),
@@ -314,6 +445,11 @@ impl Account {
         }
     }
 
+    /// Returns the available pools for the account.
+    ///
+    /// # Returns
+    ///
+    /// A boxed `Pools` instance containing the available pools.
     pub fn pools(&self) -> Box<Pools> {
         match self.pool_store.try_lock() {
             Ok(lock) => Box::new(lock.available_pools()),
@@ -325,6 +461,15 @@ impl Account {
         }
     }
 
+    /// Creates a new pool with the specified parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `_outpoint` - The outpoint for the pool.
+    /// * `_denomination` - The denomination of the pool.
+    /// * `_fee` - The fee for the pool.
+    /// * `_max_duration` - The maximum duration of the pool.
+    /// * `_peers` - The number of peers in the pool.
     pub fn create_pool(
         &mut self,
         _outpoint: String,
@@ -336,14 +481,35 @@ impl Account {
         todo!()
     }
 
+    /// Joins an existing pool with the specified outpoint and pool ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `_outpoint` - The outpoint for the pool.
+    /// * `_pool_id` - The ID of the pool to join.
     pub fn join_pool(&mut self, _outpoint: String, _pool_id: String) {
         todo!()
     }
 
+    /// Retrieves a pool with the specified pool ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `_pool_id` - The ID of the pool to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// A boxed `Pool` instance.
     pub fn pool(&mut self, _pool_id: String) -> Box<Pool> {
         todo!()
     }
 
+    /// Sets the Electrum server URL and port for the account.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL of the Electrum server.
+    /// * `port` - The port of the Electrum server.
     pub fn set_electrum(&mut self, url: String, port: String) {
         if let Ok(port) = port.parse::<u16>() {
             self.config.electrum_url = Some(url);
@@ -356,6 +522,7 @@ impl Account {
         }
     }
 
+    /// Starts the Electrum listener for the account.
     pub fn start_electrum(&mut self) {
         if let (None, Some(addr), Some(port)) = (
             &self.tx_listener,
@@ -368,6 +535,7 @@ impl Account {
         }
     }
 
+    /// Stops the Electrum listener for the account.
     pub fn stop_electrum(&mut self) {
         if let Some(stop) = self.electrum_stop.as_mut() {
             stop.store(true, Ordering::Relaxed);
@@ -375,6 +543,12 @@ impl Account {
         self.electrum_stop = None;
     }
 
+    /// Sets the Nostr relay URL and back value for the account.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL of the Nostr relay.
+    /// * `back` - The back value for the Nostr relay.
     pub fn set_nostr(&mut self, url: String, back: String) {
         if let Ok(back) = back.parse::<u64>() {
             self.config.nostr_relay = Some(url);
@@ -387,6 +561,7 @@ impl Account {
         }
     }
 
+    /// Starts the Nostr listener for the account.
     pub fn start_nostr(&mut self) {
         if let (None, Some(relay), Some(back)) = (
             &self.pool_listener,
@@ -398,6 +573,7 @@ impl Account {
         }
     }
 
+    /// Stops the Nostr listener for the account.
     pub fn stop_nostr(&mut self) {
         if let Some(stop) = self.nostr_stop.as_mut() {
             stop.store(true, Ordering::Relaxed);
@@ -405,6 +581,11 @@ impl Account {
         self.nostr_stop = None;
     }
 
+    /// Sets the look-ahead value for the account.
+    ///
+    /// # Arguments
+    ///
+    /// * `look_ahead` - The look-ahead value to set.
     pub fn set_look_ahead(&mut self, look_ahead: String) {
         log::warn!("Account::set_look_ahead() {look_ahead}");
         if let Ok(la) = look_ahead.parse::<u32>() {
@@ -417,10 +598,20 @@ impl Account {
         }
     }
 
+    /// Returns the configuration of the account.
+    ///
+    /// # Returns
+    ///
+    /// A boxed `Config` instance.
     pub fn get_config(&self) -> Box<Config> {
         self.config.clone().boxed()
     }
 
+    /// Attempts to receive a notification and convert it to a signal.
+    ///
+    /// # Returns
+    ///
+    /// A boxed `Poll` instance containing the signal.
     pub fn try_recv(&mut self) -> Box<Poll> {
         let mut poll = Poll::new();
         match self.receiver.try_recv() {
@@ -442,6 +633,15 @@ impl Account {
         Box::new(poll)
     }
 
+    /// Returns the receiving address at the specified index as a string.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the receiving address.
+    ///
+    /// # Returns
+    ///
+    /// The receiving address as a string.
     pub fn recv_addr_at(&self, index: u32) -> String {
         self.coin_store
             .lock()
@@ -451,6 +651,15 @@ impl Account {
             .to_string()
     }
 
+    /// Returns the change address at the specified index as a string.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the change address.
+    ///
+    /// # Returns
+    ///
+    /// The change address as a string.
     pub fn change_addr_at(&self, index: u32) -> String {
         self.coin_store
             .lock()
@@ -460,6 +669,11 @@ impl Account {
             .to_string()
     }
 
+    /// Generates a new receiving address entry for the account.
+    ///
+    /// # Returns
+    ///
+    /// A boxed `AddressEntry` instance.
     pub fn new_addr(&mut self) -> Box<AddressEntry> {
         let addr = self.new_recv_addr();
         let index = self.coin_store.lock().expect("poisoned").recv_tip();
@@ -471,6 +685,14 @@ impl Account {
         })
     }
 
+    /// Creates a dummy pool with the specified parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `denomination` - The denomination of the pool.
+    /// * `peers` - The number of peers in the pool.
+    /// * `timeout` - The timeout for the pool.
+    /// * `fee` - The fee for the pool.
     pub fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32) {
         if let Some(nostr_relay) = &self.config.nostr_relay {
             let relay = nostr_relay.clone();
@@ -481,10 +703,16 @@ impl Account {
         }
     }
 
+    /// Returns the Nostr relay URL for the account.
+    ///
+    /// # Returns
+    ///
+    /// The Nostr relay URL as a string.
     pub fn relay(&self) -> String {
         self.config.nostr_relay.clone().unwrap()
     }
 
+    /// Stops all listeners and sends a stopped notification.
     pub fn stop(&mut self) {
         if self.electrum_stop.is_none() && self.nostr_stop.is_none() {
             self.sender.send(Notification::Stopped).unwrap();
@@ -521,6 +749,15 @@ impl Account {
     }
 }
 
+/// Creates a new account with the specified account name.
+///
+/// # Arguments
+///
+/// * `account` - The name of the account.
+///
+/// # Returns
+///
+/// A boxed `Account` instance.
 pub fn new_account(account: String) -> Box<Account> {
     let config = Config::from_file(account);
 
@@ -548,6 +785,17 @@ macro_rules! send_electrum {
     };
 }
 
+/// Listens for transactions on the specified address and port.
+///
+/// # Arguments
+///
+/// * `addr` - The address to listen on.
+/// * `port` - The port to listen on.
+/// * `coin_store` - The coin store to update with transaction data.
+/// * `signer` - The signer for the account.
+/// * `notification` - The sender for notifications.
+/// * `address_tip` - The receiver for address tips.
+/// * `stop_request` - The stop flag for the listener.
 fn listen_txs<T: From<TxListenerNotif>>(
     addr: String,
     port: u16,
@@ -713,6 +961,15 @@ fn listen_txs<T: From<TxListenerNotif>>(
     }
 }
 
+/// Listens for pool notifications on the specified relay.
+///
+/// # Arguments
+///
+/// * `relay` - The relay address to connect to.
+/// * `pool_store` - The pool store to update with pool data.
+/// * `sender` - The sender for notifications.
+/// * `back` - The number of past events to retrieve.
+/// * `stop_request` - The stop flag for the listener.
 fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
     relay: String,
     pool_store: Arc<Mutex<PoolStore>>,
@@ -804,6 +1061,16 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
     }
 }
 
+/// Creates a dummy pool with the specified parameters and broadcasts it.
+///
+/// # Arguments
+///
+/// * `relay` - The relay address to connect to.
+/// * `denomination` - The denomination of the pool.
+/// * `peers` - The number of peers in the pool.
+/// * `timeout` - The timeout for the pool.
+/// * `fee` - The fee for the pool.
+/// * `network` - The Bitcoin network to use.
 fn dummy_pool(
     relay: String,
     denomination: u64,
