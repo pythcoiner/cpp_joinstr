@@ -861,7 +861,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
                 if !statuses.contains_key(&c_spk) {
                     // FIXME: here we can be smart an not start at 0 but at `actual_tip`
                     for i in 0..change {
-                        let spk = signer.recv_addr_at(i).script_pubkey();
+                        let spk = signer.change_addr_at(i).script_pubkey();
                         if !statuses.contains_key(&spk) {
                             paths.insert(spk.clone(), (1, i));
                             statuses.insert(spk.clone(), None);
