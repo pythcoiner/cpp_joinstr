@@ -35,7 +35,7 @@ pub struct AddressTip {
 /// - `signer`: Signer used to generate new addresses.
 /// - `notification`: Channel for sending notifications about address
 ///   tips changes.
-/// - `tx_poller`: Optional channel for sending address tip changes.
+/// - `tx_listener`: Optional channel for sending address tip changes.
 /// - `look_ahead`: Number of addresses to generate ahead of the current tip.
 pub struct AddressStore {
     store: BTreeMap<ScriptBuf, AddressEntry>,
@@ -43,7 +43,7 @@ pub struct AddressStore {
     change_generated_tip: u32,
     signer: WpkhHotSigner,
     notification: mpsc::Sender<Notification>,
-    tx_poller: Option<mpsc::Sender<AddressTip>>,
+    tx_listener: Option<mpsc::Sender<AddressTip>>,
     look_ahead: u32,
 }
 
@@ -74,7 +74,7 @@ impl AddressStore {
             change_generated_tip: change_tip,
             signer,
             notification,
-            tx_poller: None,
+            tx_listener: None,
             look_ahead,
         };
         store.update_watch_tip();
@@ -96,7 +96,7 @@ impl AddressStore {
     ///
     /// This method sends the current address tips to the transaction listener.
     fn update_watch_tip(&self) {
-        if let Some(tx_listener) = &self.tx_poller {
+        if let Some(tx_listener) = &self.tx_listener {
             let recv = self.recv_watch_tip();
             let change = self.change_watch_tip();
             // NOTE: tx_listener thread must send notification itself if
@@ -232,10 +232,10 @@ impl AddressStore {
     /// poller channel.
     ///
     /// # Parameters
-    /// - `tx_poller`: The channel for sending address tips to the poller.
-    pub fn init(&mut self, tx_poller: mpsc::Sender<AddressTip>) {
+    /// - `tx_listener`: The channel for sending address tips to the poller.
+    pub fn init(&mut self, tx_listener: mpsc::Sender<AddressTip>) {
         self.populate_maybe();
-        self.tx_poller = Some(tx_poller);
+        self.tx_listener = Some(tx_listener);
         self.notify();
     }
 

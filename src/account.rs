@@ -529,8 +529,8 @@ impl Account {
             self.config.electrum_url.clone(),
             self.config.electrum_port,
         ) {
-            let (tx_poller, electrum_stop) = self.start_listen_txs(addr, port);
-            self.coin_store.lock().expect("poisoned").init(tx_poller);
+            let (tx_listener, electrum_stop) = self.start_listen_txs(addr, port);
+            self.coin_store.lock().expect("poisoned").init(tx_listener);
             self.electrum_stop = Some(electrum_stop);
         }
     }

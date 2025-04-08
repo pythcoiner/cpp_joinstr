@@ -147,8 +147,8 @@ impl CoinStore {
     ///
     /// This method sets up the address store to send updates to the
     /// specified transaction listener.
-    pub fn init(&mut self, tx_poller: mpsc::Sender<AddressTip>) {
-        self.address_store.init(tx_poller);
+    pub fn init(&mut self, tx_listener: mpsc::Sender<AddressTip>) {
+        self.address_store.init(tx_listener);
     }
     /// Returns a clone of the signer used for generating addresses.
     ///
