@@ -7,7 +7,7 @@ use joinstr::{
     bip39::Mnemonic,
     miniscript::bitcoin::{Amount, Network},
 };
-use utils::{generate, send_to_address};
+use utils::{generate, reorg_chain, send_to_address};
 
 static INIT: Once = Once::new();
 
@@ -40,6 +40,15 @@ where
         sleep(delay);
     }
     panic!("Timeout elapsed while waiting for condition.");
+}
+
+#[test]
+fn simple_reorg() {
+    setup_logger();
+    let (_, _, _electrsd, bitcoind) = bootstrap_electrs();
+    generate(&bitcoind, 100);
+
+    reorg_chain(&bitcoind, 5);
 }
 
 #[test]

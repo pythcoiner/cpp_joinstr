@@ -64,12 +64,42 @@ pub fn send_to_address(bitcoind: &BitcoinD, addr: &Address, amount: Amount) {
     log::debug!("send_to_address({}, {}) => {}", addr, amount, txid);
 }
 
+pub fn get_block_hash(bitcoind: &BitcoinD, height: u32) -> String {
+    bitcoind
+        .client
+        .call("getblockhash", &[height.into()])
+        .unwrap()
+}
+
+pub fn get_block_height(bitcoind: &BitcoinD) -> u32 {
+    bitcoind.client.call("getblockcount", &[]).unwrap()
+}
+
 pub fn generate(bitcoind: &BitcoinD, blocks: u32) {
     let node_address = bitcoind.client.call::<Value>("getnewaddress", &[]).unwrap();
     bitcoind
         .client
         .call::<Value>("generatetoaddress", &[blocks.into(), node_address])
         .unwrap();
+}
+
+pub fn reorg_chain(bitcoind: &BitcoinD, blocks: u32) {
+    let chain_height: u32 = get_block_height(bitcoind);
+    let reorg_height = chain_height - blocks + 1;
+    let block_hash = get_block_hash(bitcoind, reorg_height);
+
+    invalidate_block(bitcoind, block_hash);
+
+    generate(bitcoind, blocks);
+}
+
+pub fn invalidate_block(bitcoind: &BitcoinD, block_hash: String) {
+    bitcoind
+        .client
+        .call::<Value>("invalidateblock", &[block_hash.clone().into()])
+        .unwrap();
+
+    log::info!("Invalidated block with hash: {}", block_hash);
 }
 
 pub fn dump_logs(e: &mut ElectrsD) {
