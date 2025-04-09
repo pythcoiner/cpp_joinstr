@@ -7,7 +7,7 @@ use electrsd::{
     },
     ElectrsD,
 };
-use joinstr::miniscript::bitcoin::{Address, Amount, Network};
+use joinstr::miniscript::bitcoin::{Address, Amount, Network, Transaction, Txid};
 use joinstr::{electrum::Client, signer::WpkhHotSigner};
 
 pub fn bootstrap_electrs() -> (
@@ -56,12 +56,21 @@ pub fn tcp_client() -> (Client, ElectrsD, BitcoinD) {
     (client, e, b)
 }
 
-pub fn send_to_address(bitcoind: &BitcoinD, addr: &Address, amount: Amount) {
+pub fn send_to_address(bitcoind: &BitcoinD, addr: &Address, amount: Amount) -> Txid {
     let txid = bitcoind
         .client
         .send_to_address(addr, amount, None, None, None, None, None, None)
         .unwrap();
     log::debug!("send_to_address({}, {}) => {}", addr, amount, txid);
+    txid
+}
+
+pub fn get_tx(bitcoind: &BitcoinD, txid: Txid) -> Transaction {
+    bitcoind.client.get_raw_transaction(&txid, None).unwrap()
+}
+
+pub fn broadcast(bitcoind: &BitcoinD, transaction: Transaction) {
+    let _txid = bitcoind.client.send_raw_transaction(&transaction).unwrap();
 }
 
 pub fn get_block_hash(bitcoind: &BitcoinD, height: u32) -> String {

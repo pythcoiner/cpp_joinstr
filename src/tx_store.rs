@@ -16,6 +16,11 @@ impl TxStore {
         }
     }
 
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+
     pub fn inner(&self) -> &BTreeMap<Txid, TxEntry> {
         &self.store
     }

@@ -897,13 +897,39 @@ fn listen_txs<T: From<TxListenerNotif>>(
                         let mut history = vec![];
                         for (spk, status) in elct_status {
                             if let Some(s) = statuses.get_mut(&spk) {
+                                // status is registered
                                 if *s != status {
-                                    history.push(spk);
+                                    // status changed
+                                    if status.is_some() {
+                                        // status is not empty so we ask for txs changes
+                                        history.push(spk);
+                                    } else {
+                                        // status change from Some(_) to None we directly update
+                                        // coin_store
+                                        let mut store = coin_store.lock().expect("poisoned");
+                                        let mut map = BTreeMap::new();
+                                        map.insert(spk.clone(), vec![]);
+                                        let _ = store.handle_history_response(map);
+                                        store.generate();
+                                    }
+                                    // record the local status change
                                     *s = status;
                                 }
-                            } else {
+                            } else if status.is_some() {
+                                // status is not None & not registered
                                 statuses.insert(spk.clone(), status);
                                 history.push(spk);
+                            } else {
+                                // status is None & not registered
+
+                                // record local status
+                                statuses.insert(spk.clone(), status);
+
+                                // update coin_store
+                                let mut store = coin_store.lock().expect("poisoned");
+                                let mut map = BTreeMap::new();
+                                map.insert(spk.clone(), vec![]);
+                                let _ = store.handle_history_response(map);
                             }
                         }
                         if !history.is_empty() {

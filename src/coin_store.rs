@@ -60,7 +60,9 @@ impl SpkHistory {
     ///
     /// This method initializes the history with default values.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            history: vec![BTreeMap::default()],
+        }
     }
     /// Inserts new transaction data into the SPK history and returns the differences.
     ///
@@ -69,31 +71,43 @@ impl SpkHistory {
     /// transactions.
     pub fn insert(&mut self, new: Vec<(bitcoin::Txid, Option<u64>)>) -> HistoryDiff {
         let new: BTreeMap<_, _> = new.into_iter().collect();
-        let diff = if self.history.is_empty() {
-            HistoryDiff {
-                added: new.clone(),
-                ..Default::default()
+        assert!(!self.history.is_empty());
+
+        // last state have no txs
+        let diff = if self.history.last().expect("not empty").is_empty() {
+            if new.is_empty() {
+                HistoryDiff::default()
+            } else {
+                self.history.push(new.clone());
+                HistoryDiff {
+                    added: new.clone(),
+                    ..Default::default()
+                }
             }
         } else {
             let mut diff = HistoryDiff::default();
-            let previous = self.history.last().expect("at least one element");
+            {
+                let previous = self.history.last().expect("at least one element");
 
-            new.iter().for_each(|(txid, height)| {
-                if !previous.contains_key(txid) {
-                    diff.added.insert(*txid, *height);
-                } else {
-                    let prev_height = previous.get(txid).expect("present");
-                    if height != prev_height {
-                        diff.changed.insert(*txid, *height);
+                new.iter().for_each(|(txid, height)| {
+                    if !previous.contains_key(txid) {
+                        diff.added.insert(*txid, *height);
+                    } else {
+                        let prev_height = previous.get(txid).expect("present");
+                        if height != prev_height {
+                            diff.changed.insert(*txid, *height);
+                        }
                     }
-                }
-            });
+                });
 
-            previous.iter().for_each(|(txid, height)| {
-                if !new.contains_key(txid) {
-                    diff.removed.insert(*txid, *height);
-                }
-            });
+                previous.iter().for_each(|(txid, height)| {
+                    if !new.contains_key(txid) {
+                        diff.removed.insert(*txid, *height);
+                    }
+                });
+            }
+            // FIXME: do not insert if last == new
+            self.history.push(new);
             diff
         };
         diff
@@ -227,6 +241,7 @@ impl CoinStore {
         hist: BTreeMap<ScriptBuf, Vec<(bitcoin::Txid, Option<u64>)>>,
     ) -> Vec<Txid> {
         let mut updates = vec![];
+
         // generate diff & drop double spent txs
         for (spk, history) in hist {
             self.recv_coin_at(&spk);

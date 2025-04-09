@@ -7,7 +7,7 @@ use joinstr::{
     bip39::Mnemonic,
     miniscript::bitcoin::{Amount, Network},
 };
-use utils::{generate, reorg_chain, send_to_address};
+use utils::{dump_logs, generate, reorg_chain, send_to_address};
 
 static INIT: Once = Once::new();
 
@@ -16,7 +16,7 @@ pub fn setup_logger() {
         env_logger::builder()
             // Ensures output is only printed in test mode
             .is_test(true)
-            .filter_level(log::LevelFilter::Info)
+            .filter_level(log::LevelFilter::Debug)
             .filter_module("bitcoind", log::LevelFilter::Info)
             .filter_module("bitcoincore_rpc", log::LevelFilter::Info)
             .filter_module("cpp_joinstr::account", log::LevelFilter::Debug)
@@ -43,7 +43,7 @@ where
 }
 
 #[test]
-fn simple_reorg() {
+fn test_reorg() {
     setup_logger();
     let (_, _, _electrsd, bitcoind) = bootstrap_electrs();
     generate(&bitcoind, 100);
@@ -163,4 +163,63 @@ fn simple_wallet() {
         },
         TIMEOUT,
     );
+}
+
+#[test]
+fn simple_reorg() {
+    setup_logger();
+    let (url, port, mut electrsd, bitcoind) = bootstrap_electrs();
+    generate(&bitcoind, 110);
+
+    const TIMEOUT: u64 = 5;
+
+    let look_ahead = 20;
+
+    let mnemonic = Mnemonic::generate(12).unwrap();
+    let mut config = Config {
+        network: Network::Regtest,
+        look_ahead,
+        ..Default::default()
+    };
+    config.network = Network::Regtest;
+    config.look_ahead = look_ahead;
+    config.set_electrum_url(url);
+    config.set_electrum_port(port.to_string());
+    config.set_mnemonic(mnemonic.to_string());
+    let mut account = Account::new(config);
+    account.start_electrum();
+    sleep(Duration::from_millis(300));
+
+    let recv_addr = account.new_recv_addr();
+    let change_addr = account.new_change_addr();
+
+    sleep(Duration::from_secs(1));
+
+    // send to recv address
+    let _recv_txid = send_to_address(&bitcoind, &recv_addr, Amount::from_btc(0.1).unwrap());
+    generate(&bitcoind, 1);
+
+    sleep(Duration::from_secs(1));
+    dump_logs(&mut electrsd);
+
+    // send to change address
+    let _change_txid = send_to_address(&bitcoind, &change_addr, Amount::from_btc(0.1).unwrap());
+    generate(&bitcoind, 1);
+
+    wait_until_timeout(
+        || {
+            let coins = account.coins();
+            coins.len() == 2
+        },
+        TIMEOUT,
+    );
+
+    log::warn!(" ------------------------------- reorg now ------------------------");
+    reorg_chain(&bitcoind, 5);
+
+    // TODO: check blocks_heights of coins have changed
+}
+
+fn test_conf_unconf() {
+    // TODO: verify that coins status (confirmed/unconfirmed) are good
 }
