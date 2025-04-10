@@ -869,7 +869,9 @@ fn listen_txs<T: From<TxListenerNotif>>(
                         }
                     }
                 }
-                send_electrum!(request, notification, stop, CoinRequest::Subscribe(sub));
+                if !sub.is_empty() {
+                    send_electrum!(request, notification, stop, CoinRequest::Subscribe(sub));
+                }
             }
             Err(e) => match e {
                 mpsc::TryRecvError::Empty => {}
