@@ -830,6 +830,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
         // stop request from consumer side
         if stop_request.load(Ordering::Relaxed) {
             send_notif!(notification, request, TxListenerNotif::Stopped);
+            let _ = request.send(CoinRequest::Stop);
             return;
         }
 
@@ -1112,5 +1113,335 @@ fn dummy_pool(
     let pool = nostr::Pool::create(relay, denomination, peers, timeout, fee, network, key);
     if let Err(e) = client.post_event(pool.try_into().expect("valid pool")) {
         println!("dummy_pool() fail to broadcast pool: {:?}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{mpsc::TryRecvError, Once};
+
+    use joinstr::miniscript::bitcoin::{
+        hashes::serde_macros::serde_details::SerdeHash, Amount, TxIn, Txid,
+    };
+
+    use crate::cpp_joinstr::CoinStatus;
+
+    use super::*;
+    use joinstr::miniscript::bitcoin::{ScriptBuf, Transaction, TxOut};
+    use rand::Rng;
+
+    static INIT: Once = Once::new();
+
+    struct CoinStoreMock {
+        pub store: Arc<Mutex<CoinStore>>,
+        pub notif: mpsc::Receiver<Notification>,
+        pub request: mpsc::Receiver<CoinRequest>,
+        pub response: mpsc::Sender<CoinResponse>,
+        pub listener: JoinHandle<()>,
+        pub stop: Arc<AtomicBool>,
+        pub signer: WpkhHotSigner,
+    }
+
+    impl Drop for CoinStoreMock {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+        }
+    }
+
+    impl CoinStoreMock {
+        fn new(recv_tip: u32, change_tip: u32, look_ahead: u32) -> Self {
+            let (notif_sender, notif_recv) = mpsc::channel();
+            let (tip_sender, tip_receiver) = mpsc::channel();
+            let (req_sender, req_receiver) = mpsc::channel();
+            let (resp_sender, resp_receiver) = mpsc::channel();
+
+            let mnemonic = bip39::Mnemonic::generate(12).unwrap();
+            let stop = Arc::new(AtomicBool::new(false));
+            let signer =
+                WpkhHotSigner::new_from_mnemonics(bitcoin::Network::Regtest, &mnemonic.to_string())
+                    .unwrap();
+
+            let coin_store = Arc::new(Mutex::new(CoinStore::new(
+                bitcoin::Network::Regtest,
+                mnemonic,
+                notif_sender.clone(),
+                recv_tip,
+                change_tip,
+                look_ahead,
+            )));
+            coin_store.lock().expect("poisoned").init(tip_sender);
+            let store = coin_store.clone();
+            let cloned_stop = stop.clone();
+            let cloned_signer = signer.clone();
+
+            let listener_handle = thread::spawn(move || {
+                listen_txs(
+                    coin_store,
+                    signer,
+                    notif_sender,
+                    tip_receiver,
+                    stop,
+                    req_sender,
+                    resp_receiver,
+                );
+            });
+
+            CoinStoreMock {
+                store,
+                notif: notif_recv,
+                request: req_receiver,
+                response: resp_sender,
+                listener: listener_handle,
+                stop: cloned_stop,
+                signer: cloned_signer,
+            }
+        }
+
+        fn coins(&mut self) -> BTreeMap<OutPoint, CoinEntry> {
+            self.store.lock().expect("poisoned").coins()
+        }
+
+        fn stop(&self) {
+            self.stop.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub fn setup_logger() {
+        INIT.call_once(|| {
+            env_logger::builder()
+                // Ensures output is only printed in test mode
+                .is_test(true)
+                .filter_level(log::LevelFilter::Debug)
+                .init();
+        });
+    }
+
+    // generate a dummy txid
+    fn txid(value: u8) -> Txid {
+        Txid::from_slice_delegated(
+            &[0; 32][..31]
+                .iter()
+                .chain(std::iter::once(&value))
+                .cloned()
+                .collect::<Vec<u8>>()[..],
+        )
+        .expect("Invalid Txid")
+    }
+
+    /// Generates a random Bitcoin transaction input.
+    #[allow(deprecated)]
+    fn random_input() -> TxIn {
+        let mut rng = rand::thread_rng();
+        let txid = txid(rng.gen::<u8>());
+        let vout = rng.gen_range(0..10);
+        TxIn {
+            previous_output: OutPoint::new(txid, vout),
+            script_sig: ScriptBuf::new(),
+            sequence: bitcoin::Sequence(0xFFFFFFFF),
+            witness: bitcoin::Witness::new(),
+        }
+    }
+
+    /// Generates a random Bitcoin transaction output.
+    #[allow(deprecated)]
+    fn random_output() -> TxOut {
+        let mut rng = rand::thread_rng();
+        let value = rng.gen_range(1..100_000);
+        let script_pubkey = ScriptBuf::new();
+        TxOut {
+            value: Amount::from_sat(value),
+            script_pubkey,
+        }
+    }
+
+    /// Generates a funding transaction paying to a given spk with additional
+    /// random inputs and outputs.
+    #[allow(deprecated)]
+    fn funding_tx(spk: ScriptBuf, amount: f64) -> Transaction {
+        let num_inputs = rand::thread_rng().gen_range(1..10);
+        let num_outputs = rand::thread_rng().gen_range(1..5);
+
+        let mut input = vec![];
+        let mut output = vec![];
+
+        for _ in 0..num_inputs {
+            input.push(random_input());
+        }
+
+        for _ in 0..num_outputs {
+            output.push(random_output());
+        }
+
+        output.push(TxOut {
+            value: Amount::from_btc(amount).unwrap(),
+            script_pubkey: spk,
+        });
+
+        Transaction {
+            version: bitcoin::transaction::Version(2),
+            lock_time: bitcoin::absolute::LockTime::Blocks(bitcoin::absolute::Height::ZERO),
+            input,
+            output,
+        }
+    }
+
+    #[test]
+    fn gen_txid() {
+        setup_logger();
+        let tx = txid(0);
+        log::debug!("{tx:?}");
+        let tx = txid(1);
+        log::debug!("{tx:?}");
+    }
+
+    #[test]
+    fn simple_start_stop() {
+        setup_logger();
+        let mock = CoinStoreMock::new(0, 0, 20);
+        thread::sleep(Duration::from_millis(10));
+        assert!(!mock.listener.is_finished());
+        assert!(matches!(
+            mock.notif.try_recv().unwrap(),
+            Notification::AddressTipChanged,
+        ));
+        assert!(matches!(
+            mock.notif.try_recv().unwrap(),
+            Notification::Electrum(TxListenerNotif::Started)
+        ));
+        mock.stop();
+        thread::sleep(Duration::from_secs(1));
+        assert!(mock.listener.is_finished());
+    }
+
+    #[test]
+    fn simple_recv() {
+        setup_logger();
+        let look_ahead = 5;
+        let mut mock = CoinStoreMock::new(0, 0, look_ahead);
+        thread::sleep(Duration::from_millis(500));
+        assert!(!mock.listener.is_finished());
+        assert!(matches!(
+            mock.notif.try_recv().unwrap(),
+            Notification::AddressTipChanged,
+        ));
+        assert!(matches!(
+            mock.notif.try_recv().unwrap(),
+            Notification::Electrum(TxListenerNotif::Started)
+        ));
+
+        let mut init_spks = vec![];
+        for i in 0..(look_ahead + 1) {
+            let spk = mock.signer.recv_addr_at(i).script_pubkey();
+            init_spks.push(spk);
+        }
+        for i in 0..(look_ahead + 1) {
+            let spk = mock.signer.change_addr_at(i).script_pubkey();
+            init_spks.push(spk);
+        }
+
+        // receive initial subscriptions
+        if let Ok(CoinRequest::Subscribe(v)) = mock.request.try_recv() {
+            // NOTE: we expect (tip + 1 + look_ahead )
+            assert_eq!(v.len(), 12);
+            for spk in &init_spks {
+                assert!(v.contains(spk));
+            }
+        } else {
+            panic!()
+        }
+
+        // electrum server send spks statuses (None)
+        let statuses: BTreeMap<_, _> = init_spks.clone().into_iter().map(|s| (s, None)).collect();
+        mock.response.send(CoinResponse::Status(statuses)).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+
+        assert!(mock.coins().is_empty());
+
+        let spk_recv_0 = mock.signer.recv_addr_at(0).script_pubkey();
+
+        // server send a status update at recv(0)
+        let mut statuses = BTreeMap::new();
+        statuses.insert(spk_recv_0.clone(), Some("1_tx_unco".to_string()));
+        mock.response.send(CoinResponse::Status(statuses)).unwrap();
+        thread::sleep(Duration::from_millis(100));
+
+        // server should receive an history request for this spk
+        if let Ok(CoinRequest::History(v)) = mock.request.try_recv() {
+            assert!(v == vec![spk_recv_0.clone()]);
+        } else {
+            panic!()
+        }
+
+        thread::sleep(Duration::from_millis(100));
+
+        let tx_0 = funding_tx(spk_recv_0.clone(), 0.1);
+
+        // server must send history response
+        let mut history = BTreeMap::new();
+        history.insert(spk_recv_0.clone(), vec![(tx_0.compute_txid(), None)]);
+        mock.response.send(CoinResponse::History(history)).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+
+        // server should receive a tx request
+        if let Ok(CoinRequest::Txs(v)) = mock.request.try_recv() {
+            assert!(v == vec![tx_0.compute_txid()]);
+        } else {
+            panic!()
+        }
+
+        thread::sleep(Duration::from_millis(100));
+
+        // server send the requested tx
+        mock.response
+            .send(CoinResponse::Txs(vec![tx_0.clone()]))
+            .unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+
+        // now the store contain one coin
+        let mut coins = mock.coins();
+        assert_eq!(coins.len(), 1);
+        let coin = coins.pop_first().unwrap().1;
+
+        // the coin is unconfirmed
+        assert_eq!(coin.height(), None);
+        assert_eq!(coin.status(), CoinStatus::Unconfirmed);
+
+        // NOTE: the coin is now confirmed
+
+        // server send a status update at recv(0)
+        let mut statuses = BTreeMap::new();
+        statuses.insert(spk_recv_0.clone(), Some("1_tx_conf".to_string()));
+        mock.response.send(CoinResponse::Status(statuses)).unwrap();
+        thread::sleep(Duration::from_millis(100));
+
+        // server should receive an history request for this spk
+        if let Ok(CoinRequest::History(v)) = mock.request.try_recv() {
+            assert!(v == vec![spk_recv_0.clone()]);
+        } else {
+            panic!()
+        }
+
+        thread::sleep(Duration::from_millis(100));
+
+        // server must send history response
+        let mut history = BTreeMap::new();
+        // the coin have now 1 confirmation
+        history.insert(spk_recv_0.clone(), vec![(tx_0.compute_txid(), Some(1))]);
+        mock.response.send(CoinResponse::History(history)).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+
+        // NOTE: coin_store already have the tx it should not ask it
+        assert!(matches!(mock.request.try_recv(), Err(TryRecvError::Empty)));
+
+        // the coin is now confirmed
+        let mut coins = mock.coins();
+        assert_eq!(coins.len(), 1);
+        let coin = coins.pop_first().unwrap().1;
+        assert_eq!(coin.height(), Some(1));
+        assert_eq!(coin.status(), CoinStatus::Confirmed);
     }
 }
