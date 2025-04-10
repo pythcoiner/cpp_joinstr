@@ -94,7 +94,7 @@ pub fn generate(bitcoind: &BitcoinD, blocks: u32) {
 
 pub fn reorg_chain(bitcoind: &BitcoinD, blocks: u32) {
     let chain_height: u32 = get_block_height(bitcoind);
-    let reorg_height = chain_height - blocks + 1;
+    let reorg_height = chain_height - blocks;
     let block_hash = get_block_hash(bitcoind, reorg_height);
 
     invalidate_block(bitcoind, block_hash);

@@ -1,13 +1,14 @@
 pub mod utils;
-use std::{sync::Once, thread::sleep, time::Duration};
+use std::{collections::BTreeMap, sync::Once, thread::sleep, time::Duration};
 
 use crate::utils::bootstrap_electrs;
 use cpp_joinstr::{account::Account, Config};
+use electrsd::bitcoind::bitcoincore_rpc::RpcApi;
 use joinstr::{
     bip39::Mnemonic,
     miniscript::bitcoin::{Amount, Network},
 };
-use utils::{dump_logs, generate, reorg_chain, send_to_address};
+use utils::{dump_logs, generate, get_block_hash, get_block_height, reorg_chain, send_to_address};
 
 static INIT: Once = Once::new();
 
@@ -20,8 +21,11 @@ pub fn setup_logger() {
             .filter_module("bitcoind", log::LevelFilter::Info)
             .filter_module("bitcoincore_rpc", log::LevelFilter::Info)
             .filter_module("cpp_joinstr::account", log::LevelFilter::Debug)
-            .filter_module("joinstr::electrum", log::LevelFilter::Info)
-            .filter_module("simple_electrum_client::raw_client", log::LevelFilter::Info)
+            .filter_module("joinstr::electrum", log::LevelFilter::Debug)
+            .filter_module(
+                "simple_electrum_client::raw_client",
+                log::LevelFilter::Debug,
+            )
             .init();
     });
 }
@@ -196,14 +200,23 @@ fn simple_reorg() {
     sleep(Duration::from_secs(1));
 
     // send to recv address
-    let _recv_txid = send_to_address(&bitcoind, &recv_addr, Amount::from_btc(0.1).unwrap());
+    let recv_txid = send_to_address(&bitcoind, &recv_addr, Amount::from_btc(0.1).unwrap());
+    let recv_tx = bitcoind
+        .client
+        .get_raw_transaction(&recv_txid, None)
+        .unwrap();
+
     generate(&bitcoind, 1);
 
     sleep(Duration::from_secs(1));
     dump_logs(&mut electrsd);
 
     // send to change address
-    let _change_txid = send_to_address(&bitcoind, &change_addr, Amount::from_btc(0.1).unwrap());
+    let change_txid = send_to_address(&bitcoind, &change_addr, Amount::from_btc(0.1).unwrap());
+    let change_tx = bitcoind
+        .client
+        .get_raw_transaction(&change_txid, None)
+        .unwrap();
     generate(&bitcoind, 1);
 
     wait_until_timeout(
@@ -214,10 +227,56 @@ fn simple_reorg() {
         TIMEOUT,
     );
 
-    log::warn!(" ------------------------------- reorg now ------------------------");
-    reorg_chain(&bitcoind, 5);
+    let coins = account.coins();
+    let coins_height: BTreeMap<_, _> = coins.into_iter().map(|(c, e)| (c, e.height())).collect();
 
-    // TODO: check blocks_heights of coins have changed
+    // all coins are confirmed
+    assert!(coins_height.iter().all(|(_, e)| e.is_some()));
+
+    let height_before_reorg = get_block_height(&bitcoind);
+    let h_before_reorg = get_block_hash(&bitcoind, height_before_reorg);
+
+    sleep(Duration::from_secs(2));
+
+    electrsd.clear_logs();
+    log::warn!(" ------------------------------- reorg now ------------------------");
+    reorg_chain(&bitcoind, 7);
+    generate(&bitcoind, 2);
+    dump_logs(&mut electrsd);
+    sleep(Duration::from_secs(2));
+    dump_logs(&mut electrsd);
+
+    // FIXME:
+    // NOTE: here we likely hitting an `electrs` bug:
+    // - we can see in the electrs logs that 2 status (None) updates are assumed sent
+    //   from electrs end
+    // - only 1 status update is received on our raw client TCP stream end
+
+    // FIXME: shouldn't bitcoind rebroadcast txs itself after reorg?
+    log::warn!(" ------------------------------- rebroadcast recv ------------------------");
+    bitcoind.client.send_raw_transaction(&recv_tx).unwrap();
+    generate(&bitcoind, 1);
+    sleep(Duration::from_secs(2));
+    dump_logs(&mut electrsd);
+
+    // FIXME: shouldn't bitcoind rebroadcast txs itself after reorg?
+    log::warn!(" ------------------------------- rebroadcast change ------------------------");
+    bitcoind.client.send_raw_transaction(&change_tx).unwrap();
+    generate(&bitcoind, 1);
+    sleep(Duration::from_secs(2));
+    dump_logs(&mut electrsd);
+
+    let new_h = get_block_hash(&bitcoind, height_before_reorg);
+    assert_ne!(h_before_reorg, new_h);
+
+    let coins = account.coins();
+    // there is still 2 coins
+    assert_eq!(coins.len(), 2);
+
+    // let diff_heights = coins_height
+    //     .iter()
+    //     .all(|(op, h)| coins.get(op).unwrap().height() != *h);
+    // assert!(diff_heights);
 }
 
 fn test_conf_unconf() {
