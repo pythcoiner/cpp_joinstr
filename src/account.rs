@@ -299,16 +299,29 @@ impl Account {
         let notification = self.sender.clone();
         let signer = self.signer();
         let stop = Arc::new(AtomicBool::new(false));
-        let cloned_stop = stop.clone();
+        let stop_request = stop.clone();
+
         let poller = thread::spawn(move || {
+            let client = match joinstr::electrum::Client::new(&addr, port) {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("start_listen_txs(): fail to create electrum client {}", e);
+                    let _ = notification.send(TxListenerNotif::Error(e.to_string()).into());
+                    return;
+                }
+            };
+
+            let (request, response, stop) = client.listen::<CoinRequest, CoinResponse>();
+
             listen_txs(
-                addr,
-                port,
                 coin_store,
                 signer,
                 notification,
                 address_tip,
-                cloned_stop,
+                stop_request,
+                request,
+                response,
+                stop,
             );
         });
         self.tx_listener = Some(poller);
@@ -796,38 +809,24 @@ macro_rules! send_electrum {
 /// * `notification` - The sender for notifications.
 /// * `address_tip` - The receiver for address tips.
 /// * `stop_request` - The stop flag for the listener.
+#[allow(clippy::too_many_arguments)]
 fn listen_txs<T: From<TxListenerNotif>>(
-    addr: String,
-    port: u16,
     coin_store: Arc<Mutex<CoinStore>>,
     signer: WpkhHotSigner,
     notification: mpsc::Sender<T>,
     address_tip: mpsc::Receiver<AddressTip>,
     stop_request: Arc<AtomicBool>,
+    request: mpsc::Sender<CoinRequest>,
+    response: mpsc::Receiver<CoinResponse>,
+    stop: Arc<AtomicBool>,
 ) {
-    let client = match joinstr::electrum::Client::new(&addr, port) {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("listen_txs(): fail to create electrum client {}", e);
-            send_notif!(
-                notification,
-                // dummy stop
-                Arc::new(AtomicBool::new(false)),
-                TxListenerNotif::Error(e.to_string())
-            );
-            return;
-        }
-    };
+    log::info!("listen_txs(): started");
+    send_notif!(notification, stop, TxListenerNotif::Started);
 
     // FIXME: here we can have a single map
     // TODO: this map should be stored to avoid poll every spk at each launch
     let mut paths = BTreeMap::<ScriptBuf, (u32, u32)>::new();
     let mut statuses = BTreeMap::<ScriptBuf, Option<String>>::new();
-
-    let (request, response, stop) = client.listen::<CoinRequest, CoinResponse>();
-
-    log::info!("listen_txs(): started");
-    send_notif!(notification, stop, TxListenerNotif::Started);
 
     loop {
         // stop request from consumer side
