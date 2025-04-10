@@ -311,7 +311,7 @@ impl Account {
                 }
             };
 
-            let (request, response, stop) = client.listen::<CoinRequest, CoinResponse>();
+            let (request, response) = client.listen::<CoinRequest, CoinResponse>();
 
             listen_txs(
                 coin_store,
@@ -321,7 +321,6 @@ impl Account {
                 stop_request,
                 request,
                 response,
-                stop,
             );
         });
         self.tx_listener = Some(poller);
@@ -779,20 +778,20 @@ pub fn new_account(account: String) -> Box<Account> {
 }
 
 macro_rules! send_notif {
-    ($notification:expr, $stop:expr, $msg:expr) => {
+    ($notification:expr, $request:expr, $msg:expr) => {
         let res = $notification.send($msg.into());
         if res.is_err() {
             // stop detached client
-            $stop.store(true, Ordering::Relaxed);
+            let _ = $request.send(CoinRequest::Stop);
             return;
         }
     };
 }
 
 macro_rules! send_electrum {
-    ($request:expr, $notification:expr, $stop:expr, $msg:expr) => {
+    ($request:expr, $notification:expr, $msg:expr) => {
         if $request.send($msg).is_err() {
-            send_notif!($notification, $stop, TxListenerNotif::Stopped);
+            send_notif!($notification, $request, TxListenerNotif::Stopped);
             return;
         }
     };
@@ -818,10 +817,9 @@ fn listen_txs<T: From<TxListenerNotif>>(
     stop_request: Arc<AtomicBool>,
     request: mpsc::Sender<CoinRequest>,
     response: mpsc::Receiver<CoinResponse>,
-    stop: Arc<AtomicBool>,
 ) {
     log::info!("listen_txs(): started");
-    send_notif!(notification, stop, TxListenerNotif::Started);
+    send_notif!(notification, request, TxListenerNotif::Started);
 
     // FIXME: here we can have a single map
     // TODO: this map should be stored to avoid poll every spk at each launch
@@ -831,7 +829,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
     loop {
         // stop request from consumer side
         if stop_request.load(Ordering::Relaxed) {
-            send_notif!(notification, stop, TxListenerNotif::Stopped);
+            send_notif!(notification, request, TxListenerNotif::Stopped);
             return;
         }
 
@@ -869,7 +867,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
                     }
                 }
                 if !sub.is_empty() {
-                    send_electrum!(request, notification, stop, CoinRequest::Subscribe(sub));
+                    send_electrum!(request, notification, CoinRequest::Subscribe(sub));
                 }
             }
             Err(e) => match e {
@@ -878,7 +876,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
                     log::error!("listen_txs(): address store disconnected");
                     send_notif!(
                         notification,
-                        stop,
+                        request,
                         TxListenerNotif::Error("AddressStore disconnected".to_string())
                     );
                     // FIXME: what should we do there?
@@ -936,19 +934,14 @@ fn listen_txs<T: From<TxListenerNotif>>(
                         if !history.is_empty() {
                             let hist = CoinRequest::History(history);
                             log::debug!("listen_txs() send {:#?}", hist);
-                            send_electrum!(request, notification, stop, hist);
+                            send_electrum!(request, notification, hist);
                         }
                     }
                     CoinResponse::History(map) => {
                         let mut store = coin_store.lock().expect("poisoned");
                         let missing_txs = store.handle_history_response(map);
                         if !missing_txs.is_empty() {
-                            send_electrum!(
-                                request,
-                                notification,
-                                stop,
-                                CoinRequest::Txs(missing_txs)
-                            );
+                            send_electrum!(request, notification, CoinRequest::Txs(missing_txs));
                         }
                     }
                     CoinResponse::Txs(txs) => {
@@ -956,12 +949,12 @@ fn listen_txs<T: From<TxListenerNotif>>(
                         store.handle_txs_response(txs);
                     }
                     CoinResponse::Stopped => {
-                        send_notif!(notification, stop, TxListenerNotif::Stopped);
-                        stop.store(true, Ordering::Relaxed);
+                        send_notif!(notification, request, TxListenerNotif::Stopped);
+                        let _ = request.send(CoinRequest::Stop);
                         return;
                     }
                     CoinResponse::Error(e) => {
-                        send_notif!(notification, stop, TxListenerNotif::Error(e));
+                        send_notif!(notification, request, TxListenerNotif::Error(e));
                     }
                 }
             }
@@ -970,8 +963,8 @@ fn listen_txs<T: From<TxListenerNotif>>(
                 mpsc::TryRecvError::Disconnected => {
                     // NOTE: here the electrum client is dropped, we cannot continue
                     log::error!("listen_txs() electrum client stopped unexpectedly");
-                    send_notif!(notification, stop, TxListenerNotif::Stopped);
-                    stop.store(true, Ordering::Relaxed);
+                    send_notif!(notification, request, TxListenerNotif::Stopped);
+                    let _ = request.send(CoinRequest::Stop);
                     return;
                 }
             },
