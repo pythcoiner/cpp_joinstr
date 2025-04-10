@@ -1118,3 +1118,44 @@ fn dummy_pool(
         println!("dummy_pool() fail to broadcast pool: {:?}", e);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_listen_txs() {
+        let (notif_sender, notif_recv) = mpsc::channel();
+        let (tip_sender, tip_receiver) = mpsc::channel();
+        let (req_sender, req_receiver) = mpsc::channel();
+        let (resp_sender, resp_receiver) = mpsc::channel();
+
+        let mnemonic = bip39::Mnemonic::generate(12).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_requested = Arc::new(AtomicBool::new(false));
+        let signer =
+            WpkhHotSigner::new_from_mnemonics(bitcoin::Network::Regtest, &mnemonic.to_string())
+                .unwrap();
+
+        let coin_store = Arc::new(Mutex::new(CoinStore::new(
+            bitcoin::Network::Regtest,
+            mnemonic,
+            notif_sender.clone(),
+            0,
+            0,
+            20,
+        )));
+
+        let listener_handle = thread::spawn(move || {
+            listen_txs(
+                coin_store.clone(),
+                signer,
+                notif_sender,
+                tip_receiver,
+                stop,
+                req_sender,
+                resp_receiver,
+                stop_requested,
+            );
+        });
+    }
+}
