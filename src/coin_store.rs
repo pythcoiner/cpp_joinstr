@@ -20,9 +20,9 @@ use crate::{
 #[derive(Debug)]
 /// Represents a store for managing coins and their associated data.
 ///
-/// The `CoinStore` is generated from the transaction store after every 
-/// TxStore update and acts as a cache for coins. It maintains mappings 
-/// of outpoints to coin entries and tracks the history of script public 
+/// The `CoinStore` is generated from the transaction store after every
+/// TxStore update and acts as a cache for coins. It maintains mappings
+/// of outpoints to coin entries and tracks the history of script public
 /// keys (SPKs).
 pub struct CoinStore {
     store: BTreeMap<OutPoint, CoinEntry>,
@@ -614,6 +614,14 @@ pub struct CoinEntry {
 }
 
 impl CoinEntry {
+    /// Returns the height of the coin in the blockchain.
+    ///
+    /// # Returns
+    /// An `Option<u64>` representing the height of the coin,
+    /// or `None` if the coin is not confirmed.
+    pub fn height(&self) -> Option<u64> {
+        self.height
+    }
     /// Returns the status of the coin.
     ///
     /// # Returns
