@@ -1257,7 +1257,7 @@ mod tests {
     /// Generates a funding transaction paying to a given spk with additional
     /// random inputs and outputs.
     #[allow(deprecated)]
-    fn funding_tx(spk: ScriptBuf, amount: f64) -> Transaction {
+    fn funding_tx(spk: ScriptBuf, amount: f64) -> bitcoin::Transaction {
         let num_inputs = rand::thread_rng().gen_range(1..10);
         let num_outputs = rand::thread_rng().gen_range(1..5);
 
@@ -1276,6 +1276,37 @@ mod tests {
             value: Amount::from_btc(amount).unwrap(),
             script_pubkey: spk,
         });
+
+        Transaction {
+            version: bitcoin::transaction::Version(2),
+            lock_time: bitcoin::absolute::LockTime::Blocks(bitcoin::absolute::Height::ZERO),
+            input,
+            output,
+        }
+    }
+
+    /// Generates a spending transaction, spending a given outpoint with additional
+    /// random inputs and outputs.
+    #[allow(deprecated)]
+    fn spending_tx(outpoint: bitcoin::OutPoint) -> bitcoin::Transaction {
+        let num_inputs = rand::thread_rng().gen_range(1..=10);
+        let num_outputs = rand::thread_rng().gen_range(0..=5);
+
+        let mut input = vec![TxIn {
+            previous_output: outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: bitcoin::Sequence(0xFFFFFFFF),
+            witness: bitcoin::Witness::new(),
+        }];
+
+        for _ in 0..(num_inputs - 1) {
+            input.push(random_input());
+        }
+
+        let mut output = Vec::with_capacity(num_outputs);
+        for _ in 0..num_outputs {
+            output.push(random_output());
+        }
 
         Transaction {
             version: bitcoin::transaction::Version(2),
@@ -1313,8 +1344,7 @@ mod tests {
         assert!(mock.listener.is_finished());
     }
 
-    #[test]
-    fn simple_recv() {
+    fn simple_recv() -> (bitcoin::Transaction, CoinStoreMock) {
         setup_logger();
         let look_ahead = 5;
         let mut mock = CoinStoreMock::new(0, 0, look_ahead);
@@ -1443,5 +1473,67 @@ mod tests {
         let coin = coins.pop_first().unwrap().1;
         assert_eq!(coin.height(), Some(1));
         assert_eq!(coin.status(), CoinStatus::Confirmed);
+        (tx_0, mock)
+    }
+
+    #[test]
+    fn recv_and_spend() {
+        // init & receive one coin
+        let (tx_0, mut mock) = simple_recv();
+        let spk_recv_0 = mock.signer.recv_addr_at(0).script_pubkey();
+
+        // spend this coin
+        let outpoint = mock.coins().pop_first().unwrap().0;
+        let tx_1 = spending_tx(outpoint);
+
+        // NOTE: the coin is now spent
+
+        // server send a status update at recv(0)
+        let mut statuses = BTreeMap::new();
+        statuses.insert(spk_recv_0.clone(), Some("1_tx_spent".to_string()));
+        mock.response.send(CoinResponse::Status(statuses)).unwrap();
+        thread::sleep(Duration::from_millis(100));
+
+        // server should receive an history request for this spk
+        if let Ok(CoinRequest::History(v)) = mock.request.try_recv() {
+            assert!(v == vec![spk_recv_0.clone()]);
+        } else {
+            panic!()
+        }
+
+        thread::sleep(Duration::from_millis(100));
+
+        // server must send history response
+        let mut history = BTreeMap::new();
+        // the coin have now 1 confirmation
+        history.insert(
+            spk_recv_0.clone(),
+            vec![(tx_0.compute_txid(), Some(1)), (tx_1.compute_txid(), None)],
+        );
+        mock.response.send(CoinResponse::History(history)).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+
+        // server should receive a tx request only for tx_1
+        if let Ok(CoinRequest::Txs(v)) = mock.request.try_recv() {
+            assert!(v == vec![tx_1.compute_txid()]);
+        } else {
+            panic!()
+        }
+
+        // server send the requested tx
+        mock.response
+            .send(CoinResponse::Txs(vec![tx_1.clone()]))
+            .unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+
+        // now the store contain one spent coin
+        let mut coins = mock.coins();
+        assert_eq!(coins.len(), 1);
+        let coin = coins.pop_first().unwrap().1;
+
+        // the coin is unconfirmed
+        assert_eq!(coin.status(), CoinStatus::Spent);
     }
 }
