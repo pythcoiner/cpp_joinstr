@@ -939,9 +939,12 @@ fn listen_txs<T: From<TxListenerNotif>>(
                     }
                     CoinResponse::History(map) => {
                         let mut store = coin_store.lock().expect("poisoned");
-                        let missing_txs = store.handle_history_response(map);
+                        let (height_updated, missing_txs) = store.handle_history_response(map);
                         if !missing_txs.is_empty() {
                             send_electrum!(request, notification, CoinRequest::Txs(missing_txs));
+                        }
+                        if height_updated {
+                            store.generate();
                         }
                     }
                     CoinResponse::Txs(txs) => {

@@ -239,8 +239,9 @@ impl CoinStore {
     pub fn handle_history_response(
         &mut self,
         hist: BTreeMap<ScriptBuf, Vec<(bitcoin::Txid, Option<u64>)>>,
-    ) -> Vec<Txid> {
+    ) -> (bool /* height_updated */, Vec<Txid>) {
         let mut updates = vec![];
+        let mut height_updated = false;
 
         // generate diff & drop double spent txs
         for (spk, history) in hist {
@@ -248,6 +249,16 @@ impl CoinStore {
             let update = self.update_spk_history(spk, history);
             updates.push(update);
         }
+
+        let mut updates: Vec<_> = updates
+            .into_iter()
+            .map(|(height, upd)| {
+                if height {
+                    height_updated = true;
+                }
+                upd
+            })
+            .collect();
 
         {
             // pre fill with tx we already have
@@ -284,7 +295,7 @@ impl CoinStore {
         } // <- release &mut tx_store
 
         self.updates.append(&mut updates);
-        txids
+        (height_updated, txids)
     }
 
     /// Updates the history for a specific script public key (SPK).
@@ -304,7 +315,7 @@ impl CoinStore {
         &mut self,
         spk: ScriptBuf,
         history: Vec<(Txid, Option<u64> /* height */)>,
-    ) -> Update {
+    ) -> (bool /* height_updated */, Update) {
         // insert a blank history if no one
         if !self.spk_history.contains_key(&spk) {
             self.spk_history.insert(spk.clone(), SpkHistory::new());
@@ -328,7 +339,7 @@ impl CoinStore {
             }
         } // <- release &mut tx_store
 
-        Update::from_diff(spk, diff)
+        (!diff.changed.is_empty(), Update::from_diff(spk, diff))
     }
 
     /// Handles the response containing transactions.
