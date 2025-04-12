@@ -1536,4 +1536,47 @@ mod tests {
         // the coin is unconfirmed
         assert_eq!(coin.status(), CoinStatus::Spent);
     }
+
+    #[test]
+    fn simple_reorg() {
+        // init & receive one coin
+        let (tx_0, mut mock) = simple_recv();
+        let spk_recv_0 = mock.signer.recv_addr_at(0).script_pubkey();
+
+        // NOTE: the coin is now spent we can reorg it
+
+        // server send a status update at recv(0)
+        let mut statuses = BTreeMap::new();
+        statuses.insert(spk_recv_0.clone(), Some("1_tx_reorg".to_string()));
+        mock.response.send(CoinResponse::Status(statuses)).unwrap();
+        thread::sleep(Duration::from_millis(100));
+
+        // server should receive an history request for this spk
+        if let Ok(CoinRequest::History(v)) = mock.request.try_recv() {
+            assert!(v == vec![spk_recv_0.clone()]);
+        } else {
+            panic!()
+        }
+
+        thread::sleep(Duration::from_millis(100));
+
+        // server must send history response
+        let mut history = BTreeMap::new();
+        // NOTE: confirmation height is changed to 2
+        history.insert(spk_recv_0.clone(), vec![(tx_0.compute_txid(), Some(2))]);
+        mock.response.send(CoinResponse::History(history)).unwrap();
+
+        thread::sleep(Duration::from_millis(100));
+
+        // server do not receive a tx request as the store already go the tx
+        assert!(matches!(mock.request.try_recv(), Err(TryRecvError::Empty)));
+
+        // the store still contain one spent coin
+        let mut coins = mock.coins();
+        assert_eq!(coins.len(), 1);
+        let coin = coins.pop_first().unwrap().1;
+
+        // the coin have a confirmation height of 2
+        assert_eq!(coin.height(), Some(2));
+    }
 }
