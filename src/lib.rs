@@ -8,6 +8,9 @@ pub mod macros;
 pub mod mnemonic;
 pub mod pool;
 pub mod pool_store;
+pub mod signer;
+#[cfg(test)]
+pub mod test_utils;
 pub mod tx_store;
 
 use std::fmt::Display;
@@ -251,7 +254,7 @@ pub mod cpp_joinstr {
     }
 }
 
-use cpp_joinstr::{LogLevel, Network, SignalFlag};
+use cpp_joinstr::{AddrAccount, LogLevel, Network, SignalFlag};
 
 impl Network {
     pub fn boxed(&self) -> Box<Network> {
@@ -388,4 +391,24 @@ pub fn init_rust_logger(level: LogLevel) {
     let level = level.into();
     env_logger::builder().filter_level(level).init();
     log::info!("init_rust_logger()");
+}
+
+impl From<AddrAccount> for u32 {
+    fn from(value: AddrAccount) -> Self {
+        match value {
+            AddrAccount::Receive => 0,
+            AddrAccount::Change => 2,
+            _ => panic!(),
+        }
+    }
+}
+
+impl From<u32> for AddrAccount {
+    fn from(value: u32) -> Self {
+        match value {
+            0 => AddrAccount::Receive,
+            1 => AddrAccount::Change,
+            _ => unimplemented!(),
+        }
+    }
 }

@@ -4,6 +4,7 @@ use joinstr::miniscript::{
     Descriptor, DescriptorPublicKey, ForEachKey,
 };
 
+#[derive(Debug)]
 pub enum Error {
     NotMultiXpub,
     WrongNetwork,
