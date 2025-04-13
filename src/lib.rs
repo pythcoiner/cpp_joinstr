@@ -1,5 +1,6 @@
 pub mod account;
 pub mod address_store;
+pub mod coin;
 pub mod coin_store;
 pub mod config;
 pub mod derivator;
