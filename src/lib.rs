@@ -2,6 +2,7 @@ pub mod account;
 pub mod address_store;
 pub mod coin_store;
 pub mod config;
+pub mod derivator;
 pub mod macros;
 pub mod mnemonic;
 pub mod pool;
