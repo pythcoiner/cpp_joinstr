@@ -18,7 +18,9 @@ use std::fmt::Display;
 use account::{new_account, Account, Poll, Signal};
 use address_store::AddressEntry;
 use coin_store::CoinEntry;
-pub use config::{config_exists, config_from_file, list_configs, Config};
+pub use config::{
+    config_exists, config_from_file, is_descriptor_valid, list_configs, new_config, Config,
+};
 use joinstr::miniscript::bitcoin;
 pub use mnemonic::{generate_mnemonic, mnemonic_from_string, Mnemonic};
 pub use pool::Pool;
@@ -111,6 +113,8 @@ pub mod cpp_joinstr {
         fn config_from_file(account: String) -> Box<Config>;
         fn config_exists(account: String) -> bool;
         fn set_account(&mut self, name: String);
+        fn is_descriptor_valid(descriptor: String) -> bool;
+        fn new_config(descriptor: String) -> Box<Config>;
     }
 
     extern "Rust" {

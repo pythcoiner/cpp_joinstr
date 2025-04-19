@@ -128,6 +128,27 @@ pub fn config_from_file(account: String) -> Box<Config> {
     Config::from_file(account).boxed()
 }
 
+pub fn is_descriptor_valid(descriptor: String) -> bool {
+    Descriptor::<DescriptorPublicKey>::from_str(&descriptor).is_ok()
+}
+
+pub fn new_config(descriptor: String) -> Box<Config> {
+    let descriptor = Descriptor::from_str(&descriptor).expect("must be checked");
+
+    Config {
+        account: String::new(),
+        electrum_url: None,
+        electrum_port: None,
+        nostr_relay: None,
+        nostr_back: None,
+        network: bitcoin::Network::Bitcoin,
+        look_ahead: 20,
+        mnemonic: String::new(),
+        descriptor,
+    }
+    .boxed()
+}
+
 // c++ interface
 impl Config {
     pub fn electrum_url(&self) -> String {
