@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
@@ -10,11 +9,9 @@ use std::{
 };
 
 use joinstr::{
-    bip39,
     electrum::{CoinRequest, CoinResponse},
     miniscript::bitcoin::{self, OutPoint, ScriptBuf},
     nostr::{self, error, sync::NostrClient},
-    signer::WpkhHotSigner,
     simple_nostr_client::nostr::key::Keys,
 };
 
@@ -22,6 +19,7 @@ use crate::{
     address_store::{AddressEntry, AddressTip},
     coin_store::{CoinEntry, CoinStore},
     cpp_joinstr::{AddrAccount, AddressStatus, PoolStatus, SignalFlag},
+    derivator::Derivator,
     pool_store::PoolStore,
     result, Coins, Config, Pool, Pools,
 };
@@ -241,12 +239,11 @@ impl Account {
     /// A new `Account` instance.
     pub fn new(config: Config) -> Self {
         assert!(!config.account.is_empty());
-        let mnemonic = bip39::Mnemonic::from_str(&config.mnemonic).unwrap();
         let (sender, receiver) = mpsc::channel();
         // TODO: import saved state from local storage
         let coin_store = Arc::new(Mutex::new(CoinStore::new(
             config.network,
-            mnemonic,
+            config.descriptor.clone(),
             sender.clone(),
             0,
             0,
@@ -297,7 +294,7 @@ impl Account {
         let (sender, address_tip) = mpsc::channel();
         let coin_store = self.coin_store.clone();
         let notification = self.sender.clone();
-        let signer = self.signer();
+        let derivator = self.derivator();
         let stop = Arc::new(AtomicBool::new(false));
         let stop_request = stop.clone();
 
@@ -315,7 +312,7 @@ impl Account {
 
             listen_txs(
                 coin_store,
-                signer,
+                derivator,
                 notification,
                 address_tip,
                 stop_request,
@@ -351,13 +348,13 @@ impl Account {
         stop
     }
 
-    /// Returns the signer associated with the account.
+    /// Returns the derivator associated with the account.
     ///
     /// # Returns
     ///
-    /// A `WpkhHotSigner` instance.
-    pub fn signer(&self) -> WpkhHotSigner {
-        self.coin_store.lock().expect("poisoned").signer()
+    /// A `Derivator` instance.
+    pub fn derivator(&self) -> Derivator {
+        self.coin_store.lock().expect("poisoned").derivator()
     }
 
     /// Returns a map of coins associated with the account.
@@ -382,8 +379,8 @@ impl Account {
         self.coin_store
             .lock()
             .expect("poisoned")
-            .signer_ref()
-            .recv_addr_at(index)
+            .derivator_ref()
+            .receive_at(index)
     }
 
     /// Returns the change address at the specified index.
@@ -399,8 +396,8 @@ impl Account {
         self.coin_store
             .lock()
             .expect("poisoned")
-            .signer_ref()
-            .change_addr_at(index)
+            .derivator_ref()
+            .change_at(index)
     }
 
     /// Generates a new receiving address for the account.
@@ -658,8 +655,8 @@ impl Account {
         self.coin_store
             .lock()
             .expect("poisoned")
-            .signer_ref()
-            .recv_addr_at(index)
+            .derivator_ref()
+            .receive_at(index)
             .to_string()
     }
 
@@ -676,8 +673,8 @@ impl Account {
         self.coin_store
             .lock()
             .expect("poisoned")
-            .signer_ref()
-            .change_addr_at(index)
+            .derivator_ref()
+            .change_at(index)
             .to_string()
     }
 
@@ -811,7 +808,7 @@ macro_rules! send_electrum {
 #[allow(clippy::too_many_arguments)]
 fn listen_txs<T: From<TxListenerNotif>>(
     coin_store: Arc<Mutex<CoinStore>>,
-    signer: WpkhHotSigner,
+    derivator: Derivator,
     notification: mpsc::Sender<T>,
     address_tip: mpsc::Receiver<AddressTip>,
     stop_request: Arc<AtomicBool>,
@@ -843,11 +840,11 @@ fn listen_txs<T: From<TxListenerNotif>>(
                 let AddressTip { recv, change } = tip;
                 received = true;
                 let mut sub = vec![];
-                let r_spk = signer.recv_addr_at(recv).script_pubkey();
+                let r_spk = derivator.receive_at(recv).script_pubkey();
                 if !statuses.contains_key(&r_spk) {
                     // FIXME: here we can be smart an not start at 0 but at `actual_tip`
                     for i in 0..recv {
-                        let spk = signer.recv_addr_at(i).script_pubkey();
+                        let spk = derivator.receive_at(i).script_pubkey();
                         if !statuses.contains_key(&spk) {
                             paths.insert(spk.clone(), (0, i));
                             statuses.insert(spk.clone(), None);
@@ -855,11 +852,11 @@ fn listen_txs<T: From<TxListenerNotif>>(
                         }
                     }
                 }
-                let c_spk = signer.change_addr_at(recv).script_pubkey();
+                let c_spk = derivator.change_at(recv).script_pubkey();
                 if !statuses.contains_key(&c_spk) {
                     // FIXME: here we can be smart an not start at 0 but at `actual_tip`
                     for i in 0..change {
-                        let spk = signer.change_addr_at(i).script_pubkey();
+                        let spk = derivator.change_at(i).script_pubkey();
                         if !statuses.contains_key(&spk) {
                             paths.insert(spk.clone(), (1, i));
                             statuses.insert(spk.clone(), None);
@@ -1118,10 +1115,13 @@ fn dummy_pool(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc::TryRecvError;
+    use std::{str::FromStr, sync::mpsc::TryRecvError};
+
+    use joinstr::{bip39, miniscript::bitcoin::bip32::DerivationPath};
 
     use crate::{
         cpp_joinstr::CoinStatus,
+        signer::{wpkh, HotSigner},
         test_utils::{funding_tx, setup_logger, spending_tx},
     };
 
@@ -1134,7 +1134,7 @@ mod tests {
         pub response: mpsc::Sender<CoinResponse>,
         pub listener: JoinHandle<()>,
         pub stop: Arc<AtomicBool>,
-        pub signer: WpkhHotSigner,
+        pub derivator: Derivator,
     }
 
     impl Drop for CoinStoreMock {
@@ -1153,12 +1153,15 @@ mod tests {
             let mnemonic = bip39::Mnemonic::generate(12).unwrap();
             let stop = Arc::new(AtomicBool::new(false));
             let signer =
-                WpkhHotSigner::new_from_mnemonics(bitcoin::Network::Regtest, &mnemonic.to_string())
+                HotSigner::new_from_mnemonics(bitcoin::Network::Regtest, &mnemonic.to_string())
                     .unwrap();
+            let xpub = signer.xpub(&DerivationPath::from_str("m/84'/0'/0'/1").unwrap());
+            let descriptor = wpkh(xpub);
+            let derivator = Derivator::new(descriptor.clone(), bitcoin::Network::Regtest).unwrap();
 
             let coin_store = Arc::new(Mutex::new(CoinStore::new(
                 bitcoin::Network::Regtest,
-                mnemonic,
+                descriptor.clone(),
                 notif_sender.clone(),
                 recv_tip,
                 change_tip,
@@ -1167,12 +1170,12 @@ mod tests {
             coin_store.lock().expect("poisoned").init(tip_sender);
             let store = coin_store.clone();
             let cloned_stop = stop.clone();
-            let cloned_signer = signer.clone();
+            let cloned_derivator = derivator.clone();
 
             let listener_handle = thread::spawn(move || {
                 listen_txs(
                     coin_store,
-                    signer,
+                    cloned_derivator,
                     notif_sender,
                     tip_receiver,
                     stop,
@@ -1188,7 +1191,7 @@ mod tests {
                 response: resp_sender,
                 listener: listener_handle,
                 stop: cloned_stop,
-                signer: cloned_signer,
+                derivator,
             }
         }
 
@@ -1237,11 +1240,11 @@ mod tests {
 
         let mut init_spks = vec![];
         for i in 0..(look_ahead + 1) {
-            let spk = mock.signer.recv_addr_at(i).script_pubkey();
+            let spk = mock.derivator.receive_spk_at(i);
             init_spks.push(spk);
         }
         for i in 0..(look_ahead + 1) {
-            let spk = mock.signer.change_addr_at(i).script_pubkey();
+            let spk = mock.derivator.change_spk_at(i);
             init_spks.push(spk);
         }
 
@@ -1264,7 +1267,7 @@ mod tests {
 
         assert!(mock.coins().is_empty());
 
-        let spk_recv_0 = mock.signer.recv_addr_at(0).script_pubkey();
+        let spk_recv_0 = mock.derivator.receive_spk_at(0);
 
         // server send a status update at recv(0)
         let mut statuses = BTreeMap::new();
@@ -1356,7 +1359,7 @@ mod tests {
     fn recv_and_spend() {
         // init & receive one coin
         let (tx_0, mut mock) = simple_recv();
-        let spk_recv_0 = mock.signer.recv_addr_at(0).script_pubkey();
+        let spk_recv_0 = mock.derivator.receive_spk_at(0);
 
         // spend this coin
         let outpoint = mock.coins().pop_first().unwrap().0;
@@ -1417,7 +1420,7 @@ mod tests {
     fn simple_reorg() {
         // init & receive one coin
         let (tx_0, mut mock) = simple_recv();
-        let spk_recv_0 = mock.signer.recv_addr_at(0).script_pubkey();
+        let spk_recv_0 = mock.derivator.receive_spk_at(0);
 
         // NOTE: the coin is now spent we can reorg it
 

@@ -17,6 +17,7 @@ pub enum Error {
 ///
 /// It holds the main descriptor, the receiving descriptor, the change descriptor,
 /// and the network type. It ensures that the descriptors are valid at creation.
+#[derive(Debug, Clone)]
 pub struct Derivator {
     descriptor: Descriptor<DescriptorPublicKey>, // DesciptorPublicKey::MultiXpub
     recv: Descriptor<DescriptorPublicKey>,       // DescriptorPublicKey::Xpub

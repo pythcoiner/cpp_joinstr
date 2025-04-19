@@ -5,7 +5,10 @@ use std::{
     str::FromStr,
 };
 
-use joinstr::{bip39::Mnemonic, miniscript::bitcoin};
+use joinstr::{
+    bip39::Mnemonic,
+    miniscript::{bitcoin, Descriptor, DescriptorPublicKey},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::cpp_joinstr::Network;
@@ -63,21 +66,7 @@ pub struct Config {
     pub network: bitcoin::Network,
     pub look_ahead: u32,
     pub mnemonic: String,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            account: "main".to_string(),
-            electrum_url: None,
-            electrum_port: None,
-            nostr_relay: None,
-            nostr_back: None,
-            network: bitcoin::Network::Regtest,
-            look_ahead: 10,
-            mnemonic: String::new(),
-        }
-    }
+    pub descriptor: Descriptor<DescriptorPublicKey>,
 }
 
 pub fn list_configs() -> Vec<String> {
@@ -123,13 +112,10 @@ impl Config {
         let mut path = Self::path(account.clone());
         path.push(CONFIG_FILENAME);
 
-        let mut conf = if let Ok(mut file) = File::open(path) {
-            let mut content = String::new();
-            let _ = file.read_to_string(&mut content);
-            serde_json::from_str(&content).ok().unwrap_or_default()
-        } else {
-            Self::default()
-        };
+        let mut file = File::open(path).unwrap();
+        let mut content = String::new();
+        let _ = file.read_to_string(&mut content);
+        let mut conf: Config = serde_json::from_str(&content).unwrap();
         let mnemo = Mnemonic::from_str(&conf.mnemonic);
         if mnemo.is_ok() {
             conf.account = account;

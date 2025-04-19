@@ -1,13 +1,11 @@
-use joinstr::{
-    miniscript::bitcoin::{self, address::NetworkUnchecked, Script, ScriptBuf},
-    signer::WpkhHotSigner,
-};
+use joinstr::miniscript::bitcoin::{self, address::NetworkUnchecked, Script, ScriptBuf};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::mpsc};
 
 use crate::{
     account::Notification,
     cpp_joinstr::{AddrAccount, AddressStatus},
+    derivator::Derivator,
     Addresses,
 };
 
@@ -41,7 +39,7 @@ pub struct AddressStore {
     store: BTreeMap<ScriptBuf, AddressEntry>,
     recv_generated_tip: u32,
     change_generated_tip: u32,
-    signer: WpkhHotSigner,
+    derivator: Derivator,
     notification: mpsc::Sender<Notification>,
     tx_listener: Option<mpsc::Sender<AddressTip>>,
     look_ahead: u32,
@@ -62,17 +60,17 @@ impl AddressStore {
     /// # Returns
     /// A new instance of `AddressStore`.
     pub fn new(
-        signer: WpkhHotSigner,
+        derivator: Derivator,
         notification: mpsc::Sender<Notification>,
         recv_tip: u32,
         change_tip: u32,
         look_ahead: u32,
     ) -> Self {
         let store = Self {
+            derivator,
             store: BTreeMap::new(),
             recv_generated_tip: recv_tip,
             change_generated_tip: change_tip,
-            signer,
             notification,
             tx_listener: None,
             look_ahead,
@@ -126,7 +124,7 @@ impl AddressStore {
     /// This method generates receiving and change addresses and adds them if not present.
     pub fn populate_maybe(&mut self) {
         for i in 0..self.recv_watch_tip() + 1 {
-            let addr = self.signer.recv_addr_at(i);
+            let addr = self.derivator.receive_at(i);
             let script = addr.script_pubkey();
             self.store.entry(script).or_insert_with(|| {
                 let address = addr.as_unchecked().clone();
@@ -139,7 +137,7 @@ impl AddressStore {
             });
         }
         for i in 0..self.change_watch_tip() + 1 {
-            let addr = self.signer.change_addr_at(i);
+            let addr = self.derivator.change_at(i);
             let script = addr.script_pubkey();
             self.store.entry(script).or_insert_with(|| {
                 let address = addr.as_unchecked().clone();
@@ -183,7 +181,7 @@ impl AddressStore {
     pub fn new_recv_addr(&mut self) -> bitcoin::Address {
         self.recv_generated_tip += 1;
         self.update_recv(self.recv_generated_tip);
-        self.signer.recv_addr_at(self.recv_generated_tip)
+        self.derivator.receive_at(self.recv_generated_tip)
     }
 
     /// Generates a new change address and updates the change address tip.
@@ -193,7 +191,7 @@ impl AddressStore {
     pub fn new_change_addr(&mut self) -> bitcoin::Address {
         self.change_generated_tip += 1;
         self.update_change(self.change_generated_tip);
-        self.signer.change_addr_at(self.change_generated_tip)
+        self.derivator.change_at(self.change_generated_tip)
     }
 
     /// Returns the current change watch tip index.

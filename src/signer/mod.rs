@@ -159,7 +159,7 @@ impl Signer for HotSigner {
 /// This struct is responsible for managing the private keys and generating
 /// addresses for receiving and change. It can create signatures for transactions
 /// using the provided private keys.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct HotSigner {
     master_xpriv: bip32::Xpriv,
     fingerprint: bip32::Fingerprint,
@@ -519,9 +519,7 @@ mod tests {
     use super::*;
     use crate::test_utils::{random_output, setup_logger, txid};
     use bitcoin::Network;
-    use joinstr::miniscript::bitcoin::{
-        absolute::Height, hashes::Hash, Amount, ScriptBuf, TxIn, Witness,
-    };
+    use joinstr::miniscript::bitcoin::{absolute::Height, Amount, ScriptBuf, TxIn, Witness};
     use std::sync::mpsc;
 
     #[test]

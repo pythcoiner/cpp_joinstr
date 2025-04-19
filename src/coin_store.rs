@@ -1,7 +1,6 @@
-use joinstr::{
-    bip39,
-    miniscript::bitcoin::{self, address::NetworkUnchecked, OutPoint, ScriptBuf, Txid},
-    signer::{self, WpkhHotSigner},
+use joinstr::miniscript::{
+    bitcoin::{self, address::NetworkUnchecked, OutPoint, ScriptBuf, Txid},
+    Descriptor, DescriptorPublicKey,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,7 +11,9 @@ use std::{
 use crate::{
     account::Notification,
     address_store::{AddressStore, AddressTip},
+    coin,
     cpp_joinstr::{AddressStatus, CoinStatus},
+    derivator::Derivator,
     tx_store::TxStore,
     Coins,
 };
@@ -31,7 +32,7 @@ pub struct CoinStore {
     tx_store: TxStore,
     spk_history: BTreeMap<ScriptBuf, SpkHistory>,
     updates: Vec<Update>,
-    signer: WpkhHotSigner,
+    derivator: Derivator,
     notification: mpsc::Sender<Notification>,
 }
 
@@ -129,17 +130,16 @@ impl CoinStore {
     /// A new instance of `CoinStore`.
     pub fn new(
         network: bitcoin::Network,
-        mnemonic: bip39::Mnemonic,
+        descriptor: Descriptor<DescriptorPublicKey>,
         notification: mpsc::Sender<Notification>,
         recv_tip: u32,
         change_tip: u32,
         look_ahead: u32,
         // TODO: pass tx_store state
     ) -> Self {
-        let signer = WpkhHotSigner::new_from_mnemonics(network, &mnemonic.to_string())
-            .expect("valid mnemonic");
+        let derivator = Derivator::new(descriptor, network).unwrap();
         let address_store = AddressStore::new(
-            signer.clone(),
+            derivator.clone(),
             notification.clone(),
             recv_tip,
             change_tip,
@@ -152,8 +152,8 @@ impl CoinStore {
             tx_store: Default::default(),
             updates: Vec::new(),
             spk_history: BTreeMap::new(),
-            signer,
             notification,
+            derivator,
         }
     }
 
@@ -164,19 +164,19 @@ impl CoinStore {
     pub fn init(&mut self, tx_listener: mpsc::Sender<AddressTip>) {
         self.address_store.init(tx_listener);
     }
-    /// Returns a clone of the signer used for generating addresses.
+    /// Returns a clone of the derivator used for generating addresses.
     ///
     /// # Returns
-    /// A `WpkhHotSigner` instance.
-    pub fn signer(&self) -> WpkhHotSigner {
-        self.signer.clone()
+    /// A `Derivator` instance.
+    pub fn derivator(&self) -> Derivator {
+        self.derivator.clone()
     }
-    /// Returns a reference to the signer used for generating addresses.
+    /// Returns a reference to the derivator used for generating addresses.
     ///
     /// # Returns
     /// A reference to a `WpkhHotSigner`.
-    pub fn signer_ref(&self) -> &WpkhHotSigner {
-        &self.signer
+    pub fn derivator_ref(&self) -> &Derivator {
+        &self.derivator
     }
     /// Returns the current receiving watch tip index.
     ///
@@ -412,16 +412,13 @@ impl CoinStore {
                     } else {
                         CoinStatus::Unconfirmed
                     };
-                    let coin = signer::Coin {
+                    let coin = coin::Coin {
                         txout,
                         outpoint,
                         // sequence is registered at spend time
                         // so fill with dummy value
                         sequence: bitcoin::Sequence::MAX,
-                        coin_path: signer::CoinPath {
-                            depth: addr.account_u32(),
-                            index: Some(addr.index()),
-                        },
+                        coin_path: (addr.account(), addr.index()),
                     };
                     let coin = CoinEntry {
                         height: entry.height(),
@@ -620,7 +617,7 @@ impl Update {
 pub struct CoinEntry {
     height: Option<u64>,
     status: CoinStatus,
-    coin: signer::Coin,
+    coin: coin::Coin,
     address: bitcoin::Address<NetworkUnchecked>,
 }
 

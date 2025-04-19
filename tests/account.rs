@@ -1,12 +1,16 @@
 pub mod utils;
-use std::{collections::BTreeMap, sync::Once, thread::sleep, time::Duration};
+use std::{collections::BTreeMap, str::FromStr, sync::Once, thread::sleep, time::Duration};
 
 use crate::utils::bootstrap_electrs;
-use cpp_joinstr::{account::Account, Config};
+use cpp_joinstr::{
+    account::Account,
+    signer::{wpkh, HotSigner},
+    Config,
+};
 use electrsd::bitcoind::bitcoincore_rpc::RpcApi;
 use joinstr::{
     bip39::Mnemonic,
-    miniscript::bitcoin::{Amount, Network},
+    miniscript::bitcoin::{self, bip32::DerivationPath, Amount, Network},
 };
 use utils::{dump_logs, generate, get_block_hash, get_block_height, reorg_chain, send_to_address};
 
@@ -67,10 +71,20 @@ fn simple_wallet() {
     let look_ahead = 20;
 
     let mnemonic = Mnemonic::generate(12).unwrap();
+    let signer =
+        HotSigner::new_from_mnemonics(bitcoin::Network::Regtest, &mnemonic.to_string()).unwrap();
+    let xpub = signer.xpub(&DerivationPath::from_str("m/84'/0'/0'/1'").unwrap());
+    let descriptor = wpkh(xpub);
     let mut config = Config {
         network: Network::Regtest,
         look_ahead,
-        ..Default::default()
+        account: "account".into(),
+        electrum_url: None,
+        electrum_port: None,
+        nostr_relay: None,
+        nostr_back: None,
+        mnemonic: mnemonic.to_string(),
+        descriptor,
     };
     config.network = Network::Regtest;
     config.look_ahead = look_ahead;
@@ -180,10 +194,20 @@ fn simple_reorg() {
     let look_ahead = 20;
 
     let mnemonic = Mnemonic::generate(12).unwrap();
+    let signer =
+        HotSigner::new_from_mnemonics(bitcoin::Network::Regtest, &mnemonic.to_string()).unwrap();
+    let xpub = signer.xpub(&DerivationPath::from_str("m/84'/0'/0'/1'").unwrap());
+    let descriptor = wpkh(xpub);
     let mut config = Config {
         network: Network::Regtest,
         look_ahead,
-        ..Default::default()
+        account: "account".into(),
+        electrum_url: None,
+        electrum_port: None,
+        nostr_relay: None,
+        nostr_back: None,
+        mnemonic: mnemonic.to_string(),
+        descriptor,
     };
     config.network = Network::Regtest;
     config.look_ahead = look_ahead;
