@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::{Read, Write},
     path::PathBuf,
@@ -7,7 +8,10 @@ use std::{
 
 use joinstr::{
     bip39::Mnemonic,
-    miniscript::{bitcoin, Descriptor, DescriptorPublicKey},
+    miniscript::{
+        bitcoin::{self, ScriptBuf},
+        Descriptor, DescriptorPublicKey,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -157,6 +161,31 @@ impl Config {
 
     pub fn tip_from_file(&self) -> Tip {
         if let Ok(mut file) = File::open(self.tip_path()) {
+            let mut content = String::new();
+            let _ = file.read_to_string(&mut content);
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            Default::default()
+        }
+    }
+
+    // let mut statuses = BTreeMap::<ScriptBuf, (Option<String>, u32, u32)>::new();
+    //
+    pub fn persist_statuses(&self, statuses: &BTreeMap<ScriptBuf, (Option<String>, u32, u32)>) {
+        let file = File::create(self.statuses_path());
+        match file {
+            Ok(mut file) => {
+                let content = serde_json::to_string_pretty(statuses).expect("cannot fail");
+                let _ = file.write(content.as_bytes());
+            }
+            Err(e) => {
+                log::error!("Config::statuses() fail to open file: {e}");
+            }
+        }
+    }
+
+    pub fn statuses_from_file(&self) -> BTreeMap<ScriptBuf, (Option<String>, u32, u32)> {
+        if let Ok(mut file) = File::open(self.statuses_path()) {
             let mut content = String::new();
             let _ = file.read_to_string(&mut content);
             serde_json::from_str(&content).unwrap_or_default()

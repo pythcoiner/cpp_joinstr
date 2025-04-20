@@ -306,6 +306,7 @@ impl Account {
         &mut self,
         addr: String,
         port: u16,
+        config: Config,
     ) -> (mpsc::Sender<AddressTip>, Arc<AtomicBool>) {
         log::debug!("Account::start_poll_txs()");
         let (sender, address_tip) = mpsc::channel();
@@ -335,6 +336,7 @@ impl Account {
                 stop_request,
                 request,
                 response,
+                Some(config),
             );
         });
         self.tx_listener = Some(poller);
@@ -555,7 +557,8 @@ impl Account {
             self.config.electrum_url.clone(),
             self.config.electrum_port,
         ) {
-            let (tx_listener, electrum_stop) = self.start_listen_txs(addr, port);
+            let (tx_listener, electrum_stop) =
+                self.start_listen_txs(addr, port, self.config.clone());
             self.coin_store.lock().expect("poisoned").init(tx_listener);
             self.electrum_stop = Some(electrum_stop);
         }
@@ -831,14 +834,30 @@ fn listen_txs<T: From<TxListenerNotif>>(
     stop_request: Arc<AtomicBool>,
     request: mpsc::Sender<CoinRequest>,
     response: mpsc::Receiver<CoinResponse>,
+    config: Option<Config>,
 ) {
     log::info!("listen_txs(): started");
     send_notif!(notification, request, TxListenerNotif::Started);
 
-    // FIXME: here we can have a single map
-    // TODO: this map should be stored to avoid poll every spk at each launch
-    let mut paths = BTreeMap::<ScriptBuf, (u32, u32)>::new();
-    let mut statuses = BTreeMap::<ScriptBuf, Option<String>>::new();
+    let mut statuses = if let Some(config) = &config {
+        config.statuses_from_file()
+    } else {
+        BTreeMap::<ScriptBuf, (Option<String>, u32, u32)>::new()
+    };
+
+    if !statuses.is_empty() {
+        let sub: Vec<_> = statuses.keys().cloned().collect();
+        send_electrum!(request, notification, CoinRequest::Subscribe(sub));
+    }
+
+    fn persist_status(
+        config: &Option<Config>,
+        statuses: &BTreeMap<ScriptBuf, (Option<String>, u32, u32)>,
+    ) {
+        if let Some(cfg) = config.as_ref() {
+            cfg.persist_statuses(statuses);
+        }
+    }
 
     loop {
         // stop request from consumer side
@@ -863,8 +882,8 @@ fn listen_txs<T: From<TxListenerNotif>>(
                     for i in 0..recv {
                         let spk = derivator.receive_at(i).script_pubkey();
                         if !statuses.contains_key(&spk) {
-                            paths.insert(spk.clone(), (0, i));
-                            statuses.insert(spk.clone(), None);
+                            statuses.insert(spk.clone(), (None, 0, i));
+                            persist_status(&config, &statuses);
                             sub.push(spk);
                         }
                     }
@@ -875,8 +894,8 @@ fn listen_txs<T: From<TxListenerNotif>>(
                     for i in 0..change {
                         let spk = derivator.change_at(i).script_pubkey();
                         if !statuses.contains_key(&spk) {
-                            paths.insert(spk.clone(), (1, i));
-                            statuses.insert(spk.clone(), None);
+                            statuses.insert(spk.clone(), (None, 1, i));
+                            persist_status(&config, &statuses);
                             sub.push(spk);
                         }
                     }
@@ -910,7 +929,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
                     CoinResponse::Status(elct_status) => {
                         let mut history = vec![];
                         for (spk, status) in elct_status {
-                            if let Some(s) = statuses.get_mut(&spk) {
+                            if let Some((s, _, _)) = statuses.get_mut(&spk) {
                                 // status is registered
                                 if *s != status {
                                     // status changed
@@ -931,13 +950,15 @@ fn listen_txs<T: From<TxListenerNotif>>(
                                 }
                             } else if status.is_some() {
                                 // status is not None & not registered
-                                statuses.insert(spk.clone(), status);
+                                statuses.entry(spk.clone()).and_modify(|s| s.0 = status);
+                                persist_status(&config, &statuses);
                                 history.push(spk);
                             } else {
                                 // status is None & not registered
 
                                 // record local status
-                                statuses.insert(spk.clone(), status);
+                                statuses.entry(spk.clone()).and_modify(|s| s.0 = status);
+                                persist_status(&config, &statuses);
 
                                 // update coin_store
                                 let mut store = coin_store.lock().expect("poisoned");
@@ -951,6 +972,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
                             log::debug!("listen_txs() send {:#?}", hist);
                             send_electrum!(request, notification, hist);
                         }
+                        persist_status(&config, &statuses);
                     }
                     CoinResponse::History(map) => {
                         let mut store = coin_store.lock().expect("poisoned");
@@ -1202,6 +1224,7 @@ mod tests {
                     stop,
                     req_sender,
                     resp_receiver,
+                    None,
                 );
             });
 
