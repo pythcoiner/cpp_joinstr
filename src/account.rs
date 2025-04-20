@@ -267,6 +267,7 @@ impl Account {
             tx_store,
             Some(config.clone()),
         )));
+        coin_store.lock().expect("poisoned").generate();
         let mut account = Account {
             coin_store,
             pool_store: Default::default(),
