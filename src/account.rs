@@ -226,6 +226,17 @@ pub struct Account {
     nostr_stop: Option<Arc<AtomicBool>>,
 }
 
+impl Drop for Account {
+    fn drop(&mut self) {
+        if let Some(stop) = self.electrum_stop.as_mut() {
+            stop.store(true, Ordering::Relaxed);
+        }
+        if let Some(stop) = self.nostr_stop.as_mut() {
+            stop.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
 // Rust only interface
 impl Account {
     /// Creates a new `Account` instance with the given configuration.
