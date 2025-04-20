@@ -21,7 +21,9 @@ use crate::{
     cpp_joinstr::{AddrAccount, AddressStatus, PoolStatus, SignalFlag},
     derivator::Derivator,
     pool_store::PoolStore,
-    result, Coins, Config, Pool, Pools,
+    result,
+    tx_store::TxStore,
+    Coins, Config, Pool, Pools,
 };
 
 result!(Poll, Signal);
@@ -251,7 +253,8 @@ impl Account {
     pub fn new(config: Config) -> Self {
         assert!(!config.account.is_empty());
         let (sender, receiver) = mpsc::channel();
-        // TODO: import saved state from local storage
+        let tx_data = TxStore::store_from_file(config.transactions_path());
+        let tx_store = TxStore::new(tx_data, Some(config.transactions_path()));
         let coin_store = Arc::new(Mutex::new(CoinStore::new(
             config.network,
             config.descriptor.clone(),
@@ -259,6 +262,7 @@ impl Account {
             0,
             0,
             config.look_ahead,
+            tx_store,
         )));
         // TODO: use indexes from stored state
         let mut account = Account {
@@ -1134,6 +1138,7 @@ mod tests {
         cpp_joinstr::CoinStatus,
         signer::{wpkh, HotSigner},
         test_utils::{funding_tx, setup_logger, spending_tx},
+        tx_store::TxStore,
     };
 
     use super::*;
@@ -1170,6 +1175,7 @@ mod tests {
             let descriptor = wpkh(xpub);
             let derivator = Derivator::new(descriptor.clone(), bitcoin::Network::Regtest).unwrap();
 
+            let tx_store = TxStore::new(Default::default(), None);
             let coin_store = Arc::new(Mutex::new(CoinStore::new(
                 bitcoin::Network::Regtest,
                 descriptor.clone(),
@@ -1177,6 +1183,7 @@ mod tests {
                 recv_tip,
                 change_tip,
                 look_ahead,
+                tx_store,
             )));
             coin_store.lock().expect("poisoned").init(tip_sender);
             let store = coin_store.clone();

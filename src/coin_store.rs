@@ -135,7 +135,7 @@ impl CoinStore {
         recv_tip: u32,
         change_tip: u32,
         look_ahead: u32,
-        // TODO: pass tx_store state
+        tx_store: TxStore,
     ) -> Self {
         let derivator = Derivator::new(descriptor, network).unwrap();
         let address_store = AddressStore::new(
@@ -149,7 +149,7 @@ impl CoinStore {
             store: BTreeMap::new(),
             spk_to_outpoint: BTreeMap::new(),
             address_store,
-            tx_store: Default::default(),
+            tx_store,
             updates: Vec::new(),
             spk_history: BTreeMap::new(),
             notification,
@@ -390,6 +390,7 @@ impl CoinStore {
     /// transactions in the transaction store and updates the address
     /// statuses accordingly.
     pub fn generate(&mut self) {
+        self.tx_store.persist();
         let addr_store = &mut self.address_store;
         let tx_store = &self.tx_store;
 

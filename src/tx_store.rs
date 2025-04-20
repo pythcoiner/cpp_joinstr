@@ -1,19 +1,23 @@
 use joinstr::miniscript::bitcoin::{self, Txid};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::{Read, Write},
+    path::PathBuf,
+};
 
 use crate::coin_store::Update;
 
 #[derive(Debug)]
 pub struct TxStore {
     store: BTreeMap<Txid, TxEntry>,
+    path: Option<PathBuf>,
 }
 
 impl TxStore {
-    pub fn new() -> Self {
-        Self {
-            store: BTreeMap::new(),
-        }
+    pub fn new(store: BTreeMap<Txid, TxEntry>, path: Option<PathBuf>) -> Self {
+        Self { store, path }
     }
 
     #[allow(clippy::len_without_is_empty)]
@@ -60,19 +64,23 @@ impl TxStore {
         self.store.get_mut(txid).expect("is present").height = height;
     }
 
-    pub fn dump(&self) -> Result<serde_json::Value, serde_json::Error> {
-        serde_json::to_value(&self.store)
+    pub fn store_from_file(path: PathBuf) -> BTreeMap<Txid, TxEntry> {
+        let file = File::open(path);
+        if let Ok(mut file) = file {
+            let mut content = String::new();
+            let _ = file.read_to_string(&mut content);
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            Default::default()
+        }
     }
 
-    pub fn restore(&mut self, value: serde_json::Value) -> Result<(), serde_json::Error> {
-        self.store = serde_json::from_value(value)?;
-        Ok(())
-    }
-}
-
-impl Default for TxStore {
-    fn default() -> Self {
-        Self::new()
+    pub fn persist(&self) {
+        if let Some(path) = &self.path {
+            let mut file = File::create(path.clone()).unwrap();
+            let content = serde_json::to_string_pretty(&self.store).unwrap();
+            let _ = file.write(content.as_bytes());
+        }
     }
 }
 

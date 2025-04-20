@@ -122,6 +122,18 @@ impl Config {
         }
         conf
     }
+
+    pub fn transactions_path(&self) -> PathBuf {
+        let mut path = Self::path(self.account.clone());
+        path.push("transactions.json");
+        path
+    }
+
+    pub fn statuses_path(&self) -> PathBuf {
+        let mut path = Self::path(self.account.clone());
+        path.push("statuses.json");
+        path
+    }
 }
 
 pub fn config_from_file(account: String) -> Box<Config> {
