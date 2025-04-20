@@ -458,6 +458,10 @@ impl Account {
 
 // C++ shared interface
 impl Account {
+    /// Re-generate coin_store from tx_store
+    pub fn generate_coins(&mut self) {
+        self.coin_store.lock().expect("poisoned").generate();
+    }
     /// Returns the spendable coins for the account.
     ///
     /// # Returns

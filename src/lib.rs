@@ -220,6 +220,7 @@ pub mod cpp_joinstr {
     extern "Rust" {
         type Account;
         fn spendable_coins(&self) -> Box<Coins>;
+        fn generate_coins(&mut self);
         fn recv_addr_at(&self, index: u32) -> String;
         fn change_addr_at(&self, index: u32) -> String;
         fn pools(&self) -> Box<Pools>;
