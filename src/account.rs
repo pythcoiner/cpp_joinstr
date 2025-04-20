@@ -18,6 +18,7 @@ use joinstr::{
 use crate::{
     address_store::{AddressEntry, AddressTip},
     coin_store::{CoinEntry, CoinStore},
+    config::Tip,
     cpp_joinstr::{AddrAccount, AddressStatus, PoolStatus, SignalFlag},
     derivator::Derivator,
     pool_store::PoolStore,
@@ -255,16 +256,17 @@ impl Account {
         let (sender, receiver) = mpsc::channel();
         let tx_data = TxStore::store_from_file(config.transactions_path());
         let tx_store = TxStore::new(tx_data, Some(config.transactions_path()));
+        let Tip { receive, change } = config.tip_from_file();
         let coin_store = Arc::new(Mutex::new(CoinStore::new(
             config.network,
             config.descriptor.clone(),
             sender.clone(),
-            0,
-            0,
+            receive,
+            change,
             config.look_ahead,
             tx_store,
+            Some(config.clone()),
         )));
-        // TODO: use indexes from stored state
         let mut account = Account {
             coin_store,
             pool_store: Default::default(),
@@ -1184,6 +1186,7 @@ mod tests {
                 change_tip,
                 look_ahead,
                 tx_store,
+                None,
             )));
             coin_store.lock().expect("poisoned").init(tip_sender);
             let store = coin_store.clone();

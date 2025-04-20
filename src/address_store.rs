@@ -6,7 +6,7 @@ use crate::{
     account::Notification,
     cpp_joinstr::{AddrAccount, AddressStatus},
     derivator::Derivator,
-    Addresses,
+    Addresses, Config,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -43,6 +43,7 @@ pub struct AddressStore {
     notification: mpsc::Sender<Notification>,
     tx_listener: Option<mpsc::Sender<AddressTip>>,
     look_ahead: u32,
+    config: Option<Config>,
 }
 
 impl AddressStore {
@@ -65,6 +66,7 @@ impl AddressStore {
         recv_tip: u32,
         change_tip: u32,
         look_ahead: u32,
+        config: Option<Config>,
     ) -> Self {
         let store = Self {
             derivator,
@@ -74,6 +76,7 @@ impl AddressStore {
             notification,
             tx_listener: None,
             look_ahead,
+            config,
         };
         store.update_watch_tip();
 
@@ -100,6 +103,9 @@ impl AddressStore {
             // NOTE: tx_listener thread must send notification itself if
             // fail to connect to electrum
             let _ = tx_listener.send(AddressTip { recv, change });
+        }
+        if let Some(config) = &self.config {
+            config.persist_tip(self.recv_generated_tip, self.change_generated_tip);
         }
     }
 

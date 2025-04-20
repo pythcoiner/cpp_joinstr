@@ -15,7 +15,7 @@ use crate::{
     cpp_joinstr::{AddressStatus, CoinStatus},
     derivator::Derivator,
     tx_store::TxStore,
-    Coins,
+    Coins, Config,
 };
 
 #[derive(Debug)]
@@ -34,6 +34,8 @@ pub struct CoinStore {
     updates: Vec<Update>,
     derivator: Derivator,
     notification: mpsc::Sender<Notification>,
+    #[allow(unused)]
+    config: Option<Config>,
 }
 
 #[derive(Debug, Default)]
@@ -128,6 +130,7 @@ impl CoinStore {
     ///
     /// # Returns
     /// A new instance of `CoinStore`.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         network: bitcoin::Network,
         descriptor: Descriptor<DescriptorPublicKey>,
@@ -136,6 +139,7 @@ impl CoinStore {
         change_tip: u32,
         look_ahead: u32,
         tx_store: TxStore,
+        config: Option<Config>,
     ) -> Self {
         let derivator = Derivator::new(descriptor, network).unwrap();
         let address_store = AddressStore::new(
@@ -144,6 +148,7 @@ impl CoinStore {
             recv_tip,
             change_tip,
             look_ahead,
+            config.clone(),
         );
         Self {
             store: BTreeMap::new(),
@@ -154,6 +159,7 @@ impl CoinStore {
             spk_history: BTreeMap::new(),
             notification,
             derivator,
+            config,
         }
     }
 

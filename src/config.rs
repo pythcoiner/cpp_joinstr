@@ -134,6 +134,42 @@ impl Config {
         path.push("statuses.json");
         path
     }
+
+    pub fn tip_path(&self) -> PathBuf {
+        let mut path = Self::path(self.account.clone());
+        path.push("tip.json");
+        path
+    }
+
+    pub fn persist_tip(&self, receive: u32, change: u32) {
+        let file = File::create(self.tip_path());
+        match file {
+            Ok(mut file) => {
+                let tip = Tip { receive, change };
+                let content = serde_json::to_string_pretty(&tip).expect("cannot fail");
+                let _ = file.write(content.as_bytes());
+            }
+            Err(e) => {
+                log::error!("Config::persist_tip() fail to open file: {e}");
+            }
+        }
+    }
+
+    pub fn tip_from_file(&self) -> Tip {
+        if let Ok(mut file) = File::open(self.tip_path()) {
+            let mut content = String::new();
+            let _ = file.read_to_string(&mut content);
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct Tip {
+    pub receive: u32,
+    pub change: u32,
 }
 
 pub fn config_from_file(account: String) -> Box<Config> {
