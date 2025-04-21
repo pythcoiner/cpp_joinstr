@@ -4,6 +4,7 @@ pub mod coin;
 pub mod coin_store;
 pub mod config;
 pub mod derivator;
+pub mod labels_store;
 pub mod macros;
 pub mod mnemonic;
 pub mod pool;

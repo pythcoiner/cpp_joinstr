@@ -145,6 +145,12 @@ impl Config {
         path
     }
 
+    pub fn labels_path(&self) -> PathBuf {
+        let mut path = Self::path(self.account.clone());
+        path.push("labels.json");
+        path
+    }
+
     pub fn persist_tip(&self, receive: u32, change: u32) {
         let file = File::create(self.tip_path());
         match file {
