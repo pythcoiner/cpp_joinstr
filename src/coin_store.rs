@@ -5,7 +5,7 @@ use joinstr::miniscript::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
-    sync::mpsc,
+    sync::{mpsc, Arc, Mutex},
 };
 
 use crate::{
@@ -14,6 +14,7 @@ use crate::{
     coin,
     cpp_joinstr::{AddressStatus, CoinStatus},
     derivator::Derivator,
+    label_store::LabelStore,
     tx_store::TxStore,
     Coins, Config,
 };
@@ -27,6 +28,7 @@ use crate::{
 /// keys (SPKs).
 pub struct CoinStore {
     store: BTreeMap<OutPoint, CoinEntry>,
+    label_store: Arc<Mutex<LabelStore>>,
     spk_to_outpoint: BTreeMap<ScriptBuf, HashSet<OutPoint>>,
     address_store: AddressStore,
     tx_store: TxStore,
@@ -139,6 +141,7 @@ impl CoinStore {
         change_tip: u32,
         look_ahead: u32,
         tx_store: TxStore,
+        label_store: Arc<Mutex<LabelStore>>,
         config: Option<Config>,
     ) -> Self {
         let derivator = Derivator::new(descriptor, network).unwrap();
@@ -154,6 +157,7 @@ impl CoinStore {
             store: BTreeMap::new(),
             spk_to_outpoint: BTreeMap::new(),
             address_store,
+            label_store,
             tx_store,
             updates: Vec::new(),
             spk_history: BTreeMap::new(),
@@ -427,11 +431,17 @@ impl CoinStore {
                         sequence: bitcoin::Sequence::MAX,
                         coin_path: (addr.account(), addr.index()),
                     };
+                    let label = self
+                        .label_store
+                        .lock()
+                        .expect("poisoned")
+                        .outpoint(coin.outpoint);
                     let coin = CoinEntry {
                         height: entry.height(),
                         status,
                         coin,
                         address: addr.address(),
+                        label,
                     };
                     coins.insert(outpoint, coin);
                 }
@@ -626,6 +636,7 @@ pub struct CoinEntry {
     status: CoinStatus,
     coin: coin::Coin,
     address: bitcoin::Address<NetworkUnchecked>,
+    label: Option<String>,
 }
 
 impl CoinEntry {
@@ -650,6 +661,9 @@ impl CoinEntry {
     /// A string describing the coin's status.
     pub fn status_str(&self) -> String {
         format!("{:?}", self.status)
+    }
+    pub fn label(&self) -> String {
+        self.label.clone().unwrap_or_default()
     }
     /// Returns the amount of the coin in satoshis.
     ///

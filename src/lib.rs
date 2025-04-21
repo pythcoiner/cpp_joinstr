@@ -4,7 +4,7 @@ pub mod coin;
 pub mod coin_store;
 pub mod config;
 pub mod derivator;
-pub mod labels_store;
+pub mod label_store;
 pub mod macros;
 pub mod mnemonic;
 pub mod pool;
@@ -129,6 +129,7 @@ pub mod cpp_joinstr {
         fn status_str(&self) -> String;
         fn boxed(&self) -> Box<CoinEntry>;
         fn address(&self) -> String;
+        fn label(&self) -> String;
     }
 
     extern "Rust" {
@@ -222,6 +223,7 @@ pub mod cpp_joinstr {
         type Account;
         fn spendable_coins(&self) -> Box<Coins>;
         fn generate_coins(&mut self);
+        fn edit_coin_label(&self, outpoint: String, label: String);
         fn recv_addr_at(&self, index: u32) -> String;
         fn change_addr_at(&self, index: u32) -> String;
         fn pools(&self) -> Box<Pools>;

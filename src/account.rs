@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
@@ -21,6 +22,7 @@ use crate::{
     config::Tip,
     cpp_joinstr::{AddrAccount, AddressStatus, PoolStatus, SignalFlag},
     derivator::Derivator,
+    label_store::{LabelKey, LabelStore},
     pool_store::PoolStore,
     result,
     tx_store::TxStore,
@@ -220,6 +222,7 @@ impl From<nostr::error::Error> for PoolListenerNotif {
 pub struct Account {
     coin_store: Arc<Mutex<CoinStore>>,
     pool_store: Arc<Mutex<PoolStore>>,
+    label_store: Arc<Mutex<LabelStore>>,
     receiver: mpsc::Receiver<Notification>,
     sender: mpsc::Sender<Notification>,
     tx_listener: Option<JoinHandle<()>>,
@@ -257,6 +260,7 @@ impl Account {
         let tx_data = TxStore::store_from_file(config.transactions_path());
         let tx_store = TxStore::new(tx_data, Some(config.transactions_path()));
         let Tip { receive, change } = config.tip_from_file();
+        let label_store = Arc::new(Mutex::new(LabelStore::from_file(config.clone())));
         let coin_store = Arc::new(Mutex::new(CoinStore::new(
             config.network,
             config.descriptor.clone(),
@@ -265,12 +269,14 @@ impl Account {
             change,
             config.look_ahead,
             tx_store,
+            label_store.clone(),
             Some(config.clone()),
         )));
         coin_store.lock().expect("poisoned").generate();
         let mut account = Account {
             coin_store,
             pool_store: Default::default(),
+            label_store,
             tx_listener: None,
             pool_listener: None,
             electrum_stop: None,
@@ -717,6 +723,25 @@ impl Account {
             account: AddrAccount::Receive,
             index,
         })
+    }
+
+    pub fn edit_coin_label(&self, outpoint: String, label: String) {
+        if let Ok(outpoint) = bitcoin::OutPoint::from_str(&outpoint) {
+            if !label.is_empty() {
+                self.label_store
+                    .lock()
+                    .expect("poisoned")
+                    .edit(LabelKey::OutPoint(outpoint), Some(label));
+            } else {
+                self.label_store
+                    .lock()
+                    .expect("poisoned")
+                    .remove(LabelKey::OutPoint(outpoint));
+            }
+        }
+        if let Ok(mut store) = self.coin_store.try_lock() {
+            store.generate();
+        }
     }
 
     /// Creates a dummy pool with the specified parameters.
@@ -1205,6 +1230,7 @@ mod tests {
             let derivator = Derivator::new(descriptor.clone(), bitcoin::Network::Regtest).unwrap();
 
             let tx_store = TxStore::new(Default::default(), None);
+            let label_store = Arc::new(Mutex::new(LabelStore::new()));
             let coin_store = Arc::new(Mutex::new(CoinStore::new(
                 bitcoin::Network::Regtest,
                 descriptor.clone(),
@@ -1213,6 +1239,7 @@ mod tests {
                 change_tip,
                 look_ahead,
                 tx_store,
+                label_store,
                 None,
             )));
             coin_store.lock().expect("poisoned").init(tip_sender);

@@ -69,11 +69,19 @@ impl LabelStore {
         self.store.get(key).cloned()
     }
 
-    pub fn edit(&mut self, key: LabelKey, value: String) {
-        self.store
-            .entry(key)
-            .and_modify(|e| *e = value.clone())
-            .or_insert(value);
+    pub fn edit(&mut self, key: LabelKey, value: Option<String>) {
+        if let Some(value) = value {
+            self.store
+                .entry(key)
+                .and_modify(|e| *e = value.clone())
+                .or_insert(value);
+        } else {
+            self.store.remove(&key);
+        }
+    }
+
+    pub fn remove(&mut self, key: LabelKey) {
+        self.store.remove(&key);
     }
 
     pub fn address(&self, address: bitcoin::Address) -> Option<String> {
