@@ -14,7 +14,7 @@ use crate::{
     coin,
     cpp_joinstr::{AddressStatus, CoinStatus},
     derivator::Derivator,
-    label_store::LabelStore,
+    label_store::{LabelKey, LabelStore},
     tx_store::TxStore,
     Coins, Config,
 };
@@ -468,6 +468,14 @@ impl CoinStore {
                     h
                 });
         });
+
+        // populate labels
+        {
+            let store = self.label_store.lock().expect("poisoned");
+            for (op, coin) in &mut coins {
+                coin.label = store.get(&LabelKey::OutPoint(*op)).clone();
+            }
+        } // => release label_store lock
 
         self.store = coins;
         self.spk_to_outpoint = spk_to_outpoint;
