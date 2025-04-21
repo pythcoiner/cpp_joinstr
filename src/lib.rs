@@ -10,6 +10,7 @@ pub mod mnemonic;
 pub mod pool;
 pub mod pool_store;
 pub mod signer;
+pub mod signing_manager;
 #[cfg(test)]
 pub mod test_utils;
 pub mod tx_store;

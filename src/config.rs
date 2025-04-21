@@ -19,7 +19,7 @@ use crate::cpp_joinstr::Network;
 
 const CONFIG_FILENAME: &str = "config.json";
 
-fn datadir() -> PathBuf {
+pub fn datadir() -> PathBuf {
     #[cfg(target_os = "linux")]
     let dir = {
         let mut dir = dirs::home_dir().unwrap();

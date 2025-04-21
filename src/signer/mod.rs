@@ -22,6 +22,7 @@ use joinstr::{
         Descriptor, DescriptorPublicKey, ForEachKey,
     },
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{cpp_joinstr::AddrAccount, derivator::Derivator};
 
@@ -170,6 +171,13 @@ pub struct HotSigner {
     sender: Option<mpsc::Sender<SignerNotif>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonSigner {
+    mnemonic: bip39::Mnemonic,
+    descriptors: BTreeSet<String>,
+    network: bitcoin::Network,
+}
+
 /// Creates a WPKH descriptor from the given extended public key (OXpub).
 ///
 /// # Arguments
@@ -213,6 +221,26 @@ pub struct OXpub {
 }
 
 impl HotSigner {
+    pub fn to_json(&self) -> Option<JsonSigner> {
+        let descriptors = self.descriptors.iter().map(|d| d.to_string()).collect();
+        self.mnemonic.as_ref().map(|mnemonic| JsonSigner {
+            mnemonic: mnemonic.clone(),
+            descriptors,
+            network: self.network,
+        })
+    }
+    pub fn from_json(json: JsonSigner) -> Self {
+        let mut signer = HotSigner::new_from_mnemonics(json.network, &json.mnemonic.to_string())
+            .expect("valid signer");
+        #[allow(clippy::mutable_key_type)]
+        let descriptors = json
+            .descriptors
+            .into_iter()
+            .filter_map(|d| Descriptor::from_str(&d).ok())
+            .collect();
+        signer.descriptors = descriptors;
+        signer
+    }
     /// Create a new [`HotSigner`] instance from the provided Xpriv key.
     ///
     /// # Arguments
@@ -468,7 +496,7 @@ impl HotSigner {
     }
 
     /// Returns the [`Fingerprint`] of this [`HotSigner`].
-    fn fingerprint(&self) -> bip32::Fingerprint {
+    pub fn fingerprint(&self) -> bip32::Fingerprint {
         self.fingerprint
     }
 
