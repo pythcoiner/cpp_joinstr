@@ -6,10 +6,14 @@ use std::{
     sync::mpsc::{self},
 };
 
-use joinstr::miniscript::bitcoin::bip32;
+use joinstr::{
+    bip39::{self},
+    miniscript::bitcoin::{self, bip32},
+};
 
 use crate::{
     config,
+    cpp_joinstr::Network,
     signer::{HotSigner, JsonSigner, Signer, SignerNotif},
 };
 
@@ -90,5 +94,16 @@ impl SigningManager {
 
     pub fn poll(&self) -> Option<SignerNotif> {
         self.receiver.try_recv().ok()
+    }
+
+    pub fn new_hot_signer(&mut self, network: Network) {
+        let mnemomic = bip39::Mnemonic::generate(12).unwrap();
+        self.new_hot_signer_from_mnemonic(network, mnemomic.to_string());
+    }
+
+    pub fn new_hot_signer_from_mnemonic(&mut self, network: Network, mnemonic: String) {
+        let signer = HotSigner::new_from_mnemonics(network.into(), &mnemonic).unwrap();
+        self.hot_signers.insert(signer.fingerprint(), signer);
+        self.persist();
     }
 }
