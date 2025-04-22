@@ -93,6 +93,7 @@ pub mod cpp_joinstr {
         NotUsed,
         Used,
         Reused,
+        Unknown,
     }
 
     extern "Rust" {
@@ -130,6 +131,7 @@ pub mod cpp_joinstr {
         fn status_str(&self) -> String;
         fn boxed(&self) -> Box<CoinEntry>;
         fn address(&self) -> String;
+        fn rust_address(&self) -> Box<AddressEntry>;
         fn label(&self) -> String;
     }
 

@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     account::Notification,
-    address_store::{AddressStore, AddressTip},
+    address_store::{AddressEntry, AddressStore, AddressTip},
     coin,
     cpp_joinstr::{AddressStatus, CoinStatus},
     derivator::Derivator,
@@ -714,6 +714,18 @@ impl CoinEntry {
     /// A string representation of the coin's address.
     pub fn address(&self) -> String {
         self.address.clone().assume_checked().to_string()
+    }
+    /// Returns the address associated with the coin as an 'AddressEntry'
+    ///
+    /// # Returns
+    /// A boxed AddressEntry representation of the coin's address.
+    pub fn rust_address(&self) -> Box<AddressEntry> {
+        Box::new(AddressEntry {
+            status: AddressStatus::Unknown,
+            address: self.address.clone(),
+            account: self.coin.coin_path.0,
+            index: self.coin.coin_path.1,
+        })
     }
     /// Returns the script public key (SPK) associated with the coin.
     ///
