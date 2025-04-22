@@ -434,4 +434,8 @@ impl AddressEntry {
     pub fn address(&self) -> bitcoin::Address<NetworkUnchecked> {
         self.address.clone()
     }
+
+    pub fn clone_boxed(&self) -> Box<Self> {
+        Box::new(self.clone())
+    }
 }

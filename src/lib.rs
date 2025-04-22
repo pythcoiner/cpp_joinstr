@@ -187,6 +187,8 @@ pub mod cpp_joinstr {
         fn value(&self) -> String;
         fn account(&self) -> AddrAccount;
         fn index(&self) -> u32;
+        #[rust_name = clone_boxed]
+        fn clone(&self) -> Box<AddressEntry>;
     }
 
     extern "Rust" {
