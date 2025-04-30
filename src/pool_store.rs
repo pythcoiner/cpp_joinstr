@@ -3,16 +3,21 @@ use joinstr::nostr::{self};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// A structure to manage a collection of pools.
 #[derive(Debug, Default)]
 pub struct PoolStore {
     store: BTreeMap<String, PoolEntry>,
 }
 
 impl PoolStore {
+    /// Creates a new instance of `PoolStore`.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Updates the status of a pool in the store.
+    ///
+    /// Returns `true` if the status was changed, `false` otherwise.
     pub fn update(&mut self, pool: nostr::Pool, status: PoolStatus) -> bool /* updated */ {
         let mut updated = false;
         self.store
@@ -27,7 +32,10 @@ impl PoolStore {
         updated
     }
 
-    // Call by C++
+    /// Retrieves all pools with the specified status.
+    ///
+    /// # Arguments
+    /// * `status` - The status to filter pools by.
     pub fn get_by_status(&self, status: PoolStatus) -> Pools {
         let mut out = Pools::new();
         let pools = self
@@ -46,7 +54,7 @@ impl PoolStore {
         out
     }
 
-    // Call by C++
+    /// Retrieves all available pools.
     pub fn available_pools(&self) -> Pools {
         let mut out = Pools::new();
         let pools = self
@@ -62,17 +70,9 @@ impl PoolStore {
         out.set(pools);
         out
     }
-
-    pub fn dump(&self) -> Result<serde_json::Value, serde_json::Error> {
-        serde_json::to_value(&self.store)
-    }
-
-    pub fn restore(&mut self, value: serde_json::Value) -> Result<(), serde_json::Error> {
-        self.store = serde_json::from_value(value)?;
-        Ok(())
-    }
 }
 
+/// Represents a single pool entry with its status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolEntry {
     status: PoolStatus,
@@ -80,12 +80,15 @@ pub struct PoolEntry {
 }
 
 impl PoolEntry {
+    /// Returns the ID of the pool.
     pub fn pool_id(&self) -> String {
         self.pool.id.clone()
     }
+    /// Returns the status of the pool.
     pub fn status(&self) -> PoolStatus {
         self.status
     }
+    /// Returns a boxed clone of the pool.
     pub fn pool(&self) -> Box<Pool> {
         Box::new(self.pool.clone().into())
     }

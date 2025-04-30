@@ -435,6 +435,10 @@ impl AddressEntry {
         self.address.clone()
     }
 
+    /// Clones the address entry and returns it as a boxed instance.
+    ///
+    /// # Returns
+    /// A `Box<Self>` containing the cloned address entry.
     pub fn clone_boxed(&self) -> Box<Self> {
         Box::new(self.clone())
     }

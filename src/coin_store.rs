@@ -694,6 +694,10 @@ impl CoinEntry {
     pub fn status_str(&self) -> String {
         format!("{:?}", self.status)
     }
+    /// Returns the label associated with the coin.
+    ///
+    /// # Returns
+    /// A string representation of the coin's label, or an empty string if no label is set.
     pub fn label(&self) -> String {
         self.label.clone().unwrap_or_default()
     }

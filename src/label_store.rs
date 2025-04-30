@@ -17,12 +17,14 @@ pub enum LabelKey {
 }
 
 #[derive(Debug, Clone, Default)]
+/// A store for managing labels associated with Bitcoin addresses, transactions, and outpoints.
 pub struct LabelStore {
     store: BTreeMap<LabelKey, String>,
     config: Option<Config>,
 }
 
 impl LabelStore {
+    /// Creates a new, empty `LabelStore`.
     pub fn new() -> Self {
         LabelStore {
             store: BTreeMap::new(),
@@ -30,6 +32,10 @@ impl LabelStore {
         }
     }
 
+    /// Creates a `LabelStore` from a file specified in the given configuration.
+    ///
+    /// # Parameters
+    /// - `config`: The configuration containing the path to the labels file.
     pub fn from_file(config: Config) -> Self {
         let file = File::open(config.labels_path());
         match file {
@@ -50,6 +56,7 @@ impl LabelStore {
         }
     }
 
+    /// Persists the current labels to the file specified in the configuration.
     pub fn persist(&self) {
         if let Some(config) = self.config.as_ref() {
             let file = File::create(config.labels_path());
@@ -65,10 +72,24 @@ impl LabelStore {
         }
     }
 
+    /// Retrieves the label associated with the given key.
+    ///
+    /// # Parameters
+    /// - `key`: The key for which to retrieve the label.
+    ///
+    /// # Returns
+    /// An `Option<String>` containing the label if found, or `None` if not.
     pub fn get(&self, key: &LabelKey) -> Option<String> {
         self.store.get(key).cloned()
     }
 
+    /// Edits the label associated with the given key.
+    ///
+    /// If a value is provided, it updates the label. If `None` is provided, it removes the label.
+    ///
+    /// # Parameters
+    /// - `key`: The key for the label to edit.
+    /// - `value`: An optional new value for the label.
     pub fn edit(&mut self, key: LabelKey, value: Option<String>) {
         if let Some(value) = value {
             self.store
@@ -80,18 +101,43 @@ impl LabelStore {
         }
     }
 
+    /// Removes the label associated with the given key.
+    ///
+    /// # Parameters
+    /// - `key`: The key for the label to remove.
     pub fn remove(&mut self, key: LabelKey) {
         self.store.remove(&key);
     }
 
+    /// Retrieves the label associated with the given Bitcoin address.
+    ///
+    /// # Parameters
+    /// - `address`: The Bitcoin address for which to retrieve the label.
+    ///
+    /// # Returns
+    /// An `Option<String>` containing the label if found, or `None` if not.
     pub fn address(&self, address: bitcoin::Address) -> Option<String> {
         self.get(&LabelKey::Address(address.as_unchecked().clone()))
     }
 
+    /// Retrieves the label associated with the given outpoint.
+    ///
+    /// # Parameters
+    /// - `outpoint`: The outpoint for which to retrieve the label.
+    ///
+    /// # Returns
+    /// An `Option<String>` containing the label if found, or `None` if not.
     pub fn outpoint(&self, outpoint: OutPoint) -> Option<String> {
         self.get(&LabelKey::OutPoint(outpoint))
     }
 
+    /// Retrieves the label associated with the given transaction ID.
+    ///
+    /// # Parameters
+    /// - `txid`: The transaction ID for which to retrieve the label.
+    ///
+    /// # Returns
+    /// An `Option<String>` containing the label if found, or `None` if not.
     pub fn transaction(&self, txid: bitcoin::Txid) -> Option<String> {
         self.get(&LabelKey::Transaction(txid))
     }

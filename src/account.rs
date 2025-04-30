@@ -852,6 +852,12 @@ impl Account {
         })
     }
 
+    /// Edits the label of a coin identified by the given outpoint.
+    ///
+    /// # Arguments
+    ///
+    /// * `outpoint` - A string representation of the outpoint for the coin.
+    /// * `label` - The new label to set for the coin. If the label is empty, the label will be removed.
     pub fn edit_coin_label(&self, outpoint: String, label: String) {
         if let Ok(outpoint) = bitcoin::OutPoint::from_str(&outpoint) {
             if !label.is_empty() {
