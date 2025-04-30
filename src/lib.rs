@@ -30,6 +30,16 @@ pub use pool::Pool;
 #[cxx::bridge]
 pub mod cpp_joinstr {
 
+    pub struct TransactionTemplate {
+        inputs: Vec<String /* outpoint */>,
+        outputs: Vec<Output>,
+    }
+
+    pub struct Output {
+        address: String,
+        amount: u64,
+    }
+
     #[derive(Debug, Clone, Copy)]
     pub enum LogLevel {
         Off,
@@ -225,12 +235,21 @@ pub mod cpp_joinstr {
     }
 
     extern "Rust" {
+        type PsbtResult;
+        fn is_ok(&self) -> bool;
+        fn is_err(&self) -> bool;
+        fn value(&self) -> String;
+        fn error(&self) -> String;
+    }
+
+    extern "Rust" {
         type Account;
         fn spendable_coins(&self) -> Box<Coins>;
         fn generate_coins(&mut self);
         fn edit_coin_label(&self, outpoint: String, label: String);
         fn recv_addr_at(&self, index: u32) -> String;
         fn change_addr_at(&self, index: u32) -> String;
+        fn prepare_transaction(&mut self, tx_template: TransactionTemplate) -> Box<PsbtResult>;
         fn pools(&self) -> Box<Pools>;
         fn create_pool(
             &mut self,
@@ -299,7 +318,7 @@ impl From<bitcoin::Network> for Network {
     }
 }
 
-result!(Coins, Vec<Box<CoinEntry>>);
+results!(Coins, Vec<Box<CoinEntry>>);
 impl Coins {
     pub fn count(&self) -> usize {
         self.inner.as_ref().map(|v| v.len()).unwrap_or(0)
@@ -314,7 +333,7 @@ impl Coins {
     }
 }
 
-result!(Pools, Vec<Box<Pool>>);
+results!(Pools, Vec<Box<Pool>>);
 impl Pools {
     pub fn count(&self) -> usize {
         self.inner.as_ref().map(|v| v.len()).unwrap_or(0)
@@ -329,7 +348,7 @@ impl Pools {
     }
 }
 
-result!(Addresses, Vec<Box<AddressEntry>>);
+results!(Addresses, Vec<Box<AddressEntry>>);
 impl Addresses {
     pub fn count(&self) -> usize {
         self.inner.as_ref().map(|v| v.len()).unwrap_or(0)
@@ -344,7 +363,7 @@ impl Addresses {
     }
 }
 
-result!(Txid, String);
+results!(Txid, String);
 impl Txid {
     pub fn value(&self) -> String {
         self.unwrap()
@@ -425,3 +444,5 @@ impl From<u32> for AddrAccount {
         }
     }
 }
+
+result!(PsbtResult, String);

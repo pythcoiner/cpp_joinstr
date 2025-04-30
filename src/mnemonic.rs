@@ -1,8 +1,8 @@
-use crate::result;
+use crate::results;
 use joinstr::bip39;
 use std::str::FromStr;
 
-result!(Mnemonic, bip39::Mnemonic);
+results!(Mnemonic, bip39::Mnemonic);
 
 pub fn mnemonic_from_string(value: String) -> Box<Mnemonic> {
     let mut res = Mnemonic::new();

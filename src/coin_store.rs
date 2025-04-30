@@ -12,7 +12,7 @@ use crate::{
     account::Notification,
     address_store::{AddressEntry, AddressStore, AddressTip},
     coin,
-    cpp_joinstr::{AddressStatus, CoinStatus},
+    cpp_joinstr::{AddrAccount, AddressStatus, CoinStatus},
     derivator::Derivator,
     label_store::{LabelKey, LabelStore},
     tx_store::TxStore,
@@ -226,6 +226,19 @@ impl CoinStore {
     /// A new `bitcoin::Address` for change outputs.
     pub fn new_change_addr(&mut self) -> bitcoin::Address {
         self.address_store.new_change_addr()
+    }
+
+    /// Retrieves information about an address associated with the given script public key (SPK).
+    ///
+    /// This method queries the address store to find the entry corresponding to the provided SPK.
+    ///
+    /// # Parameters
+    /// - `spk`: A reference to the `ScriptBuf` representing the script public key for which to retrieve the address information.
+    ///
+    /// # Returns
+    /// An `Option<AddressEntry>` containing the address information if found, or `None` if no entry exists for the given SPK.
+    pub fn address_info(&self, spk: &ScriptBuf) -> Option<AddressEntry> {
+        self.address_store.get_entry(spk)
     }
 
     /// Processes a received coin at the specified script public key.
@@ -527,6 +540,17 @@ impl CoinStore {
         out
     }
 
+    /// Retrieves a coin entry from the store by its outpoint.
+    ///
+    /// # Parameters
+    /// - `outpoint`: A reference to the `OutPoint` of the coin to retrieve.
+    ///
+    /// # Returns
+    /// An `Option<CoinEntry>` containing the coin entry if found, or `None` if no entry exists for the given outpoint.
+    pub fn get(&self, outpoint: &bitcoin::OutPoint) -> Option<CoinEntry> {
+        self.store.get(outpoint).cloned()
+    }
+
     /// Retrieves spendable coins from the store.
     ///
     /// This method filters the coins that are either unconfirmed or
@@ -700,6 +724,32 @@ impl CoinEntry {
     /// A string describing the coin's outpoint.
     pub fn outpoint_str(&self) -> String {
         self.outpoint().to_string()
+    }
+    /// Generate the TxIn from the coin.
+    ///
+    /// # Returns
+    /// A `bitcoin::TxIn` representing the input transaction associated with the coin.
+    pub fn txin(&self) -> bitcoin::TxIn {
+        bitcoin::TxIn {
+            previous_output: self.coin.outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: bitcoin::Sequence::ZERO,
+            witness: bitcoin::Witness::new(),
+        }
+    }
+    /// Returns the TxOut of this coin.
+    ///
+    /// # Returns
+    /// A `bitcoin::TxOut` representing the output transaction associated with the coin.
+    pub fn txout(&self) -> bitcoin::TxOut {
+        self.coin.txout.clone()
+    }
+    /// Returns the derivation path associated with the coin.
+    ///
+    /// # Returns
+    /// A tuple containing the `AddrAccount` and the index of the coin's derivation path.
+    pub fn deriv(&self) -> (AddrAccount, u32) {
+        self.coin.coin_path
     }
     /// Returns a boxed version of the coin entry.
     ///

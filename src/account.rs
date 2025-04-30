@@ -11,7 +11,10 @@ use std::{
 
 use joinstr::{
     electrum::{CoinRequest, CoinResponse},
-    miniscript::bitcoin::{self, OutPoint, ScriptBuf},
+    miniscript::{
+        bitcoin::{self, absolute, EcdsaSighashType, OutPoint, ScriptBuf},
+        psbt::PsbtExt,
+    },
     nostr::{self, error, sync::NostrClient},
     simple_nostr_client::nostr::key::Keys,
 };
@@ -20,16 +23,16 @@ use crate::{
     address_store::{AddressEntry, AddressTip},
     coin_store::{CoinEntry, CoinStore},
     config::Tip,
-    cpp_joinstr::{AddrAccount, AddressStatus, PoolStatus, SignalFlag},
+    cpp_joinstr::{AddrAccount, AddressStatus, PoolStatus, SignalFlag, TransactionTemplate},
     derivator::Derivator,
     label_store::{LabelKey, LabelStore},
     pool_store::PoolStore,
-    result,
+    results,
     tx_store::TxStore,
-    Coins, Config, Pool, Pools,
+    Coins, Config, Pool, Pools, PsbtResult,
 };
 
-result!(Poll, Signal);
+results!(Poll, Signal);
 
 /// Represents a signal that can either contain a value or an error message, emulating a Result type through bindings to C++.
 #[derive(Default, Clone)]
@@ -482,6 +485,130 @@ impl Account {
                 Box::new(coins)
             }
         }
+    }
+
+    /// Prepare a PSBT ready to sign from a `TransactionTemplate`.
+    ///
+    /// # Returns
+    ///
+    /// A boxed PsbtResult containing the PSBT or the error string.
+    pub fn prepare_transaction(&mut self, tx_template: TransactionTemplate) -> Box<PsbtResult> {
+        let mut outpoints = vec![];
+        for inp in tx_template.inputs {
+            let parsed: Result<bitcoin::OutPoint, _> = serde_json::from_str(&inp);
+            match parsed {
+                Ok(op) => outpoints.push(op),
+                Err(_) => return "Fail to parse Outpoint".into(),
+            }
+        }
+
+        let mut outputs = vec![];
+        {
+            let store = self.coin_store.lock().expect("poisoned");
+            for out in tx_template.outputs {
+                let addr = match bitcoin::Address::from_str(&out.address) {
+                    Ok(a) => a,
+                    Err(_) => return "Fail to parse address".into(),
+                };
+                if !addr.is_valid_for_network(self.config.network) {
+                    return "Provided address is not valid for the current network".into();
+                }
+                let addr = addr.assume_checked();
+                let txout = bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(out.amount),
+                    script_pubkey: addr.script_pubkey(),
+                };
+                let deriv = store
+                    .address_info(&addr.script_pubkey())
+                    .map(|e| (e.account(), e.index()));
+                outputs.push((txout, deriv));
+            }
+        } // <- drop coin_store lock here
+
+        let inputs = {
+            let store = self.coin_store.lock().expect("poisoned");
+            let mut inputs = Vec::<CoinEntry>::new();
+            for op in outpoints {
+                match store.get(&op) {
+                    Some(coin) => inputs.push(coin),
+                    // TODO: support external inputs
+                    None => return "Provided outpoint do not match an available coin".into(),
+                }
+            }
+            inputs
+        }; // <- release coin_store lock
+
+        let mut tx = bitcoin::Transaction {
+            version: bitcoin::transaction::Version(2),
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![],
+            output: vec![],
+        };
+
+        for i in &inputs {
+            tx.input.push(i.txin());
+        }
+
+        for o in &outputs {
+            tx.output.push(o.0.clone());
+        }
+
+        let mut psbt = match bitcoin::Psbt::from_unsigned_tx(tx) {
+            Ok(psbt) => psbt,
+            Err(_) => return "Fail to generate PSBT from unsigned transaction".into(),
+        };
+
+        let descriptor = self.config.descriptor.clone();
+        let mut descriptors = descriptor
+            .into_single_descriptors()
+            .expect("have a multipath")
+            .into_iter();
+        let receive = descriptors.next().expect("have a multipath");
+        let change = descriptors.next().expect("have a multipath");
+
+        // Populate PSBT inputs
+        for (index, coin) in inputs.iter().enumerate() {
+            // NOTE: for now we consider all inputs to be owned by this descriptor
+            let (account, addr_index) = coin.deriv();
+            let descriptor = match account {
+                AddrAccount::Receive => &receive,
+                AddrAccount::Change => &change,
+                _ => unreachable!(),
+            };
+            let definite = descriptor
+                .at_derivation_index(addr_index)
+                .expect("has a wildcard");
+            if let Err(e) = psbt.update_input_with_descriptor(index, &definite) {
+                log::error!("fail to update PSBT input w/ descriptor: {e}");
+                return "Fail to update PSBT input with descriptor".into();
+            }
+
+            let input = psbt.inputs.get_mut(index).expect("valid index");
+
+            // TODO: allow sighash to be passed in the TransactionTemplate
+            input.sighash_type = Some(EcdsaSighashType::All.into());
+
+            input.witness_utxo = Some(coin.txout());
+        }
+
+        // Populate PSBT outputs
+        for (index, (_, deriv)) in outputs.iter().enumerate() {
+            if let Some((account, addr_index)) = deriv {
+                let descriptor = match *account {
+                    AddrAccount::Receive => &receive,
+                    AddrAccount::Change => &change,
+                    _ => unreachable!(),
+                };
+                let definite = descriptor
+                    .at_derivation_index(*addr_index)
+                    .expect("has a wildcard");
+                if let Err(e) = psbt.update_output_with_descriptor(index, &definite) {
+                    log::error!("fail to update PSBT output w/ descriptor: {e}");
+                    return "Fail to update PSBT output with descriptor".into();
+                }
+            }
+        }
+        PsbtResult::ok(psbt.to_string()).boxed()
     }
 
     /// Returns the available pools for the account.

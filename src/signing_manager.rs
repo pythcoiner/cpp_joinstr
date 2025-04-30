@@ -8,7 +8,7 @@ use std::{
 
 use joinstr::{
     bip39::{self},
-    miniscript::bitcoin::{self, bip32},
+    miniscript::bitcoin::bip32,
 };
 
 use crate::{
