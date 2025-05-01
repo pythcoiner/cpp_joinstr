@@ -1,21 +1,20 @@
-use crate::results;
+use crate::result;
 use joinstr::bip39;
 use std::str::FromStr;
 
-results!(Mnemonic, bip39::Mnemonic);
+result!(Mnemonic, bip39::Mnemonic);
 
 pub fn mnemonic_from_string(value: String) -> Box<Mnemonic> {
-    let mut res = Mnemonic::new();
     match bip39::Mnemonic::from_str(&value) {
-        Ok(m) => res.set(m),
-        Err(e) => res.set_error(e.to_string()),
+        Ok(m) => Mnemonic::ok(m),
+        Err(e) => Mnemonic::err(&e.to_string()),
     }
-    Box::new(res)
+    .boxed()
 }
 
 impl From<Mnemonic> for bip39::Mnemonic {
     fn from(value: Mnemonic) -> Self {
-        value.unwrap()
+        value.value()
     }
 }
 

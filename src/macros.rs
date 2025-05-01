@@ -51,12 +51,19 @@ macro_rules! results {
 #[macro_export]
 macro_rules! result {
     ($struct_name:ident, $inner:ty) => {
-        #[derive(Debug)]
+        #[derive(Debug, Clone)]
         pub struct $struct_name {
             value: Option<$inner>,
             error: Option<String>,
         }
         impl $struct_name {
+            #[allow(clippy::new_without_default)]
+            pub fn new() -> Self {
+                Self {
+                    value: None,
+                    error: None,
+                }
+            }
             pub fn ok(value: $inner) -> Self {
                 Self {
                     value: Some(value),
@@ -81,8 +88,8 @@ macro_rules! result {
             pub fn error(&self) -> String {
                 self.error.clone().unwrap()
             }
-            pub fn boxed(self) -> Box<Self> {
-                Box::new(self)
+            pub fn boxed(&self) -> Box<Self> {
+                Box::new(self.clone())
             }
         }
         impl From<&str> for Box<$struct_name> {

@@ -30,15 +30,21 @@ use crate::{
     derivator::Derivator,
     label_store::{LabelKey, LabelStore},
     pool_store::PoolStore,
-    results,
+    result,
     tx_store::TxStore,
     Config, PoolsResult, PsbtResult,
 };
 
-results!(Poll, Signal);
+result!(Poll, Signal);
+
+impl Poll {
+    pub fn signal(&self) -> Box<Signal> {
+        Box::new(self.value())
+    }
+}
 
 /// Represents a signal that can either contain a value or an error message, emulating a Result type through bindings to C++.
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Signal {
     inner: Option<SignalFlag>,
     error: Option<String>,
@@ -771,7 +777,6 @@ impl Account {
     ///
     /// A boxed `Poll` instance containing the signal.
     pub fn try_recv(&mut self) -> Box<Poll> {
-        let mut poll = Poll::new();
         match self.receiver.try_recv() {
             Ok(notif) => {
                 if let Notification::Electrum(TxListenerNotif::Stopped) = &notif {
@@ -781,14 +786,13 @@ impl Account {
                     self.nostr_stop = None;
                     self.pool_listener = None;
                 }
-                poll.set(notif.to_signal());
+                Poll::ok(notif.to_signal()).boxed()
             }
             Err(e) => match e {
-                mpsc::TryRecvError::Disconnected => poll.set_error("Disconnected".to_string()),
-                mpsc::TryRecvError::Empty => {}
+                mpsc::TryRecvError::Disconnected => Poll::err("Disconnected").boxed(),
+                mpsc::TryRecvError::Empty => Poll::new().boxed(),
             },
         }
-        Box::new(poll)
     }
 
     /// Returns the receiving address at the specified index as a string.

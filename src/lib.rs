@@ -148,7 +148,7 @@ pub mod cpp_joinstr {
         fn is_ok(&self) -> bool;
         fn is_err(&self) -> bool;
         fn error(&self) -> String;
-        fn boxed(&self) -> Box<Signal>;
+        fn signal(&self) -> Box<Signal>;
     }
 
     extern "Rust" {
@@ -297,12 +297,7 @@ impl From<bitcoin::Network> for Network {
 
 result!(AddressesResult, Vec<AddressEntry>);
 
-results!(Txid, String);
-impl Txid {
-    pub fn value(&self) -> String {
-        self.unwrap()
-    }
-}
+result!(Txid, String);
 
 impl Display for SignalFlag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
