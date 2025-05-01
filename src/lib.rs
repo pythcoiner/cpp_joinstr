@@ -73,7 +73,7 @@ pub mod cpp_joinstr {
         Bitcoin,
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
     pub enum CoinStatus {
         Unconfirmed,
         Confirmed,
@@ -95,7 +95,7 @@ pub mod cpp_joinstr {
         Change,
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
     pub enum AddressStatus {
         NotUsed,
         Used,
@@ -152,6 +152,7 @@ pub mod cpp_joinstr {
         fn generate_mnemonic() -> String;
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
     pub struct RustCoin {
         height: u64,
         confirmed: bool,
@@ -161,7 +162,7 @@ pub mod cpp_joinstr {
         label: String,
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
     pub struct RustAddress {
         address: String,
         status: AddressStatus,
