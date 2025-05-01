@@ -168,15 +168,13 @@ pub mod cpp_joinstr {
         fn generate_mnemonic() -> String;
     }
 
-    extern "Rust" {
-        #[rust_name = Coins]
-        type RustCoins;
-        fn is_ok(&self) -> bool;
-        fn is_err(&self) -> bool;
-        fn error(&self) -> String;
-        fn count(&self) -> usize;
-        fn is_empty(&self) -> bool;
-        fn get(&self, index: usize) -> Box<CoinEntry>;
+    pub struct RustCoin {
+        height: u64,
+        confirmed: bool,
+        status: CoinStatus,
+        outpoint: String,
+        address: RustAddress,
+        label: String,
     }
 
     #[derive(Debug, Clone)]
@@ -223,7 +221,7 @@ pub mod cpp_joinstr {
 
     extern "Rust" {
         type Account;
-        fn spendable_coins(&self) -> Box<Coins>;
+        fn spendable_coins(&self) -> Vec<RustCoin>;
         fn generate_coins(&mut self);
         fn edit_coin_label(&self, outpoint: String, label: String);
         fn recv_addr_at(&self, index: u32) -> String;
@@ -294,21 +292,6 @@ impl From<bitcoin::Network> for Network {
             bitcoin::Network::Bitcoin => Network::Bitcoin,
             _ => unreachable!(),
         }
-    }
-}
-
-results!(Coins, Vec<Box<CoinEntry>>);
-impl Coins {
-    pub fn count(&self) -> usize {
-        self.inner.as_ref().map(|v| v.len()).unwrap_or(0)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.count() != 0
-    }
-
-    pub fn get(&self, index: usize) -> Box<CoinEntry> {
-        self.inner.as_ref().unwrap().get(index).unwrap().clone()
     }
 }
 

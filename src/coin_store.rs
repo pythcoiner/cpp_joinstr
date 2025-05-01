@@ -12,11 +12,11 @@ use crate::{
     account::Notification,
     address_store::{AddressEntry, AddressStore, AddressTip},
     coin,
-    cpp_joinstr::{AddrAccount, AddressStatus, CoinStatus, RustAddress},
+    cpp_joinstr::{AddrAccount, AddressStatus, CoinStatus, RustAddress, RustCoin},
     derivator::Derivator,
     label_store::{LabelKey, LabelStore},
     tx_store::TxStore,
-    Coins, Config,
+    Config,
 };
 
 #[derive(Debug)]
@@ -519,25 +519,22 @@ impl CoinStore {
     ///
     /// # Parameters
     /// - `status`: The status of the coins to retrieve.
-    ///
-    /// # Returns
-    /// A `Coins` object containing the filtered coins.
-    pub fn get_by_status(&self, status: CoinStatus) -> Coins {
-        let mut out = Coins::new();
-        let coins = self
-            .store
+    pub fn get_by_status(&self, status: CoinStatus) -> Vec<RustCoin> {
+        self.store
             .clone()
             .into_iter()
             .filter_map(|(_, coin)| {
                 if coin.status == status {
-                    Some(Box::new(coin))
+                    let address = self
+                        .address_store
+                        .get_entry(&coin.spk())
+                        .expect("coins have an address");
+                    Some(rust_coin(coin, address))
                 } else {
                     None
                 }
             })
-            .collect::<Vec<_>>();
-        out.set(coins);
-        out
+            .collect::<Vec<_>>()
     }
 
     /// Retrieves a coin entry from the store by its outpoint.
@@ -555,23 +552,22 @@ impl CoinStore {
     ///
     /// This method filters the coins that are either unconfirmed or
     /// confirmed and returns them as a `Coins` object.
-    ///
-    /// # Returns
-    /// A `Coins` object containing the spendable coins.
-    pub fn spendable_coins(&self) -> Coins {
-        let mut out = Coins::new();
-        let coins = self
-            .store
+    pub fn spendable_coins(&self) -> Vec<RustCoin> {
+        self.store
             .clone()
             .into_iter()
             .filter_map(|(_, coin)| match coin.status {
-                CoinStatus::Unconfirmed | CoinStatus::Confirmed => Some(Box::new(coin)),
-                CoinStatus::BeingSpend | CoinStatus::Spent => None,
+                CoinStatus::Unconfirmed | CoinStatus::Confirmed | CoinStatus::BeingSpend => {
+                    let address = self
+                        .address_store
+                        .get_entry(&coin.spk())
+                        .expect("coin have a valid address");
+                    Some(rust_coin(coin, address))
+                }
+                CoinStatus::Spent => None,
                 _ => unreachable!(),
             })
-            .collect();
-        out.set(coins);
-        out
+            .collect()
     }
 
     /// Returns all coins in the store.
@@ -788,5 +784,16 @@ impl CoinEntry {
     /// The `ScriptBuf` representing the coin's SPK.
     pub fn spk(&self) -> ScriptBuf {
         self.address.clone().assume_checked().script_pubkey()
+    }
+}
+
+pub fn rust_coin(coin: CoinEntry, address: AddressEntry) -> RustCoin {
+    RustCoin {
+        height: coin.height.unwrap_or(0),
+        confirmed: coin.height.is_some(),
+        status: coin.status,
+        outpoint: coin.coin.outpoint.to_string(),
+        address: address.into(),
+        label: coin.label(),
     }
 }

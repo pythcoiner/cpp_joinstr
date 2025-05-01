@@ -24,7 +24,7 @@ use crate::{
     coin_store::{CoinEntry, CoinStore},
     config::Tip,
     cpp_joinstr::{
-        AddrAccount, AddressStatus, PoolStatus, RustAddress, RustPool, SignalFlag,
+        AddrAccount, AddressStatus, PoolStatus, RustAddress, RustCoin, RustPool, SignalFlag,
         TransactionTemplate,
     },
     derivator::Derivator,
@@ -32,7 +32,7 @@ use crate::{
     pool_store::PoolStore,
     results,
     tx_store::TxStore,
-    Coins, Config, PoolsResult, PsbtResult,
+    Config, PoolsResult, PsbtResult,
 };
 
 results!(Poll, Signal);
@@ -474,20 +474,9 @@ impl Account {
     pub fn generate_coins(&mut self) {
         self.coin_store.lock().expect("poisoned").generate();
     }
-    /// Returns the spendable coins for the account.
-    ///
-    /// # Returns
-    ///
-    /// A boxed `Coins` instance containing the spendable coins.
-    pub fn spendable_coins(&self) -> Box<Coins> {
-        match self.coin_store.try_lock() {
-            Ok(lock) => Box::new(lock.spendable_coins()),
-            Err(_) => {
-                let mut coins = Coins::new();
-                coins.set_error("CoinStore Locked".to_string());
-                Box::new(coins)
-            }
-        }
+    /// Returns spendable coins for the account.
+    pub fn spendable_coins(&self) -> Vec<RustCoin> {
+        self.coin_store.lock().expect("poisoned").spendable_coins()
     }
 
     /// Prepare a PSBT ready to sign from a `TransactionTemplate`.
