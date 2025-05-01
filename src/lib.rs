@@ -209,6 +209,7 @@ pub mod cpp_joinstr {
         fn is_err(&self) -> bool;
         fn value(&self) -> Vec<RustPool>;
         fn error(&self) -> String;
+        fn relay(&self) -> String;
     }
 
     extern "Rust" {
@@ -420,6 +421,9 @@ impl PoolsResult {
     }
     pub fn boxed(&self) -> Box<Self> {
         Box::new(self.clone())
+    }
+    pub fn relay(&self) -> String {
+        self.relay.clone()
     }
 }
 impl From<&str> for Box<PoolsResult> {
