@@ -12,7 +12,7 @@ use crate::{
     account::Notification,
     address_store::{AddressEntry, AddressStore, AddressTip},
     coin,
-    cpp_joinstr::{AddrAccount, AddressStatus, CoinStatus, RustAddress, RustCoin},
+    cpp_joinstr::{AddrAccount, AddressStatus, CoinState, CoinStatus, RustAddress, RustCoin},
     derivator::Derivator,
     label_store::{LabelKey, LabelStore},
     tx_store::TxStore,
@@ -552,7 +552,7 @@ impl CoinStore {
     ///
     /// This method filters the coins that are either unconfirmed or
     /// confirmed and returns them as a `Coins` object.
-    pub fn spendable_coins(&self) -> Vec<RustCoin> {
+    pub fn spendable_coins(&self) -> CoinState {
         let mut coins: Vec<_> = self
             .store
             .clone()
@@ -570,7 +570,28 @@ impl CoinStore {
             })
             .collect();
         coins.sort();
-        coins
+        let mut state = CoinState {
+            coins: vec![],
+            confirmed_coins: 0,
+            confirmed_balance: 0,
+            unconfirmed_coins: 0,
+            unconfirmed_balance: 0,
+        };
+        for coin in &state.coins {
+            match coin.status {
+                CoinStatus::Unconfirmed => {
+                    state.unconfirmed_coins += 1;
+                    state.unconfirmed_balance += coin.value;
+                }
+                CoinStatus::Confirmed => {
+                    state.confirmed_coins += 1;
+                    state.confirmed_balance += coin.value;
+                }
+                _ => {}
+            }
+        }
+        state.coins = coins;
+        state
     }
 
     /// Returns all coins in the store.
@@ -792,6 +813,7 @@ impl CoinEntry {
 
 pub fn rust_coin(coin: CoinEntry, address: AddressEntry) -> RustCoin {
     RustCoin {
+        value: coin.coin.txout.value.to_sat(),
         height: coin.height.unwrap_or(0),
         confirmed: coin.height.is_some(),
         status: coin.status,

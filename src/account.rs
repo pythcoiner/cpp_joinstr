@@ -24,7 +24,7 @@ use crate::{
     coin_store::{CoinEntry, CoinStore},
     config::Tip,
     cpp_joinstr::{
-        AddrAccount, AddressStatus, PoolStatus, RustAddress, RustCoin, RustPool, SignalFlag,
+        AddrAccount, AddressStatus, CoinState, PoolStatus, RustAddress, RustPool, SignalFlag,
         TransactionTemplate,
     },
     derivator::Derivator,
@@ -481,7 +481,7 @@ impl Account {
         self.coin_store.lock().expect("poisoned").generate();
     }
     /// Returns spendable coins for the account.
-    pub fn spendable_coins(&self) -> Vec<RustCoin> {
+    pub fn spendable_coins(&self) -> CoinState {
         self.coin_store.lock().expect("poisoned").spendable_coins()
     }
 

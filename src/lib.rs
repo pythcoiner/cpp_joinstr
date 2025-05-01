@@ -153,7 +153,17 @@ pub mod cpp_joinstr {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+    pub struct CoinState {
+        coins: Vec<RustCoin>,
+        confirmed_coins: usize,
+        confirmed_balance: u64,
+        unconfirmed_coins: usize,
+        unconfirmed_balance: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
     pub struct RustCoin {
+        value: u64,
         height: u64,
         confirmed: bool,
         status: CoinStatus,
@@ -208,7 +218,7 @@ pub mod cpp_joinstr {
 
     extern "Rust" {
         type Account;
-        fn spendable_coins(&self) -> Vec<RustCoin>;
+        fn spendable_coins(&self) -> CoinState;
         fn generate_coins(&mut self);
         fn edit_coin_label(&self, outpoint: String, label: String);
         fn recv_addr_at(&self, index: u32) -> String;
