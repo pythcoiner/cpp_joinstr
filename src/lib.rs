@@ -18,7 +18,6 @@ use std::fmt::Display;
 
 use account::{new_account, Account, Poll, Signal};
 use address_store::AddressEntry;
-use coin_store::CoinEntry;
 pub use config::{
     config_exists, config_from_file, is_descriptor_valid, list_configs, new_config, Config,
 };
@@ -126,21 +125,6 @@ pub mod cpp_joinstr {
         fn set_account(&mut self, name: String);
         fn is_descriptor_valid(descriptor: String) -> bool;
         fn new_config(descriptor: String) -> Box<Config>;
-    }
-
-    extern "Rust" {
-        #[rust_name = CoinEntry]
-        type RustCoin;
-        fn amount_sat(&self) -> u64;
-        fn amount_btc(&self) -> f64;
-        #[cxx_name = outpoint]
-        fn outpoint_str(&self) -> String;
-        #[cxx_name = status]
-        fn status_str(&self) -> String;
-        fn boxed(&self) -> Box<CoinEntry>;
-        fn address(&self) -> String;
-        fn rust_address(&self) -> RustAddress;
-        fn label(&self) -> String;
     }
 
     extern "Rust" {
