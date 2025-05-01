@@ -139,7 +139,7 @@ pub mod cpp_joinstr {
         fn status_str(&self) -> String;
         fn boxed(&self) -> Box<CoinEntry>;
         fn address(&self) -> String;
-        fn rust_address(&self) -> Box<AddressEntry>;
+        fn rust_address(&self) -> RustAddress;
         fn label(&self) -> String;
     }
 
@@ -179,26 +179,12 @@ pub mod cpp_joinstr {
         fn get(&self, index: usize) -> Box<CoinEntry>;
     }
 
-    extern "Rust" {
-        #[rust_name = AddressEntry]
-        type RustAddress;
-        fn status(&self) -> AddressStatus;
-        fn value(&self) -> String;
-        fn account(&self) -> AddrAccount;
-        fn index(&self) -> u32;
-        #[rust_name = clone_boxed]
-        fn clone(&self) -> Box<AddressEntry>;
-    }
-
-    extern "Rust" {
-        #[rust_name = Addresses]
-        type AddressList;
-        fn is_ok(&self) -> bool;
-        fn is_err(&self) -> bool;
-        fn error(&self) -> String;
-        fn count(&self) -> usize;
-        fn is_empty(&self) -> bool;
-        fn get(&self, index: usize) -> Box<AddressEntry>;
+    #[derive(Debug, Clone)]
+    pub struct RustAddress {
+        address: String,
+        status: AddressStatus,
+        account: AddrAccount,
+        index: u32,
     }
 
     extern "Rust" {
@@ -257,7 +243,7 @@ pub mod cpp_joinstr {
         fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32);
         fn try_recv(&mut self) -> Box<Poll>;
         fn relay(&self) -> String;
-        fn new_addr(&mut self) -> Box<AddressEntry>;
+        fn new_addr(&mut self) -> RustAddress;
         fn set_electrum(&mut self, url: String, port: String);
         fn start_electrum(&mut self);
         fn stop_electrum(&mut self);
@@ -326,20 +312,7 @@ impl Coins {
     }
 }
 
-results!(Addresses, Vec<Box<AddressEntry>>);
-impl Addresses {
-    pub fn count(&self) -> usize {
-        self.inner.as_ref().map(|v| v.len()).unwrap_or(0)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.count() != 0
-    }
-
-    pub fn get(&self, index: usize) -> Box<AddressEntry> {
-        self.inner.as_ref().unwrap().get(index).unwrap().clone()
-    }
-}
+result!(AddressesResult, Vec<AddressEntry>);
 
 results!(Txid, String);
 impl Txid {

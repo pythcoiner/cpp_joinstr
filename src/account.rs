@@ -24,7 +24,8 @@ use crate::{
     coin_store::{CoinEntry, CoinStore},
     config::Tip,
     cpp_joinstr::{
-        AddrAccount, AddressStatus, PoolStatus, RustPool, SignalFlag, TransactionTemplate,
+        AddrAccount, AddressStatus, PoolStatus, RustAddress, RustPool, SignalFlag,
+        TransactionTemplate,
     },
     derivator::Derivator,
     label_store::{LabelKey, LabelStore},
@@ -842,15 +843,16 @@ impl Account {
     /// # Returns
     ///
     /// A boxed `AddressEntry` instance.
-    pub fn new_addr(&mut self) -> Box<AddressEntry> {
+    pub fn new_addr(&mut self) -> RustAddress {
         let addr = self.new_recv_addr();
         let index = self.coin_store.lock().expect("poisoned").recv_tip();
-        Box::new(AddressEntry {
+        AddressEntry {
             status: AddressStatus::NotUsed,
             address: addr.as_unchecked().clone(),
             account: AddrAccount::Receive,
             index,
-        })
+        }
+        .into()
     }
 
     /// Edits the label of a coin identified by the given outpoint.

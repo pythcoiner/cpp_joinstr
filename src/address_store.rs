@@ -4,9 +4,9 @@ use std::{collections::BTreeMap, sync::mpsc};
 
 use crate::{
     account::Notification,
-    cpp_joinstr::{AddrAccount, AddressStatus},
+    cpp_joinstr::{AddrAccount, AddressStatus, RustAddress},
     derivator::Derivator,
-    Addresses, Config,
+    Config,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -275,15 +275,14 @@ impl AddressStore {
     ///
     /// # Returns
     /// An `Addresses` object containing all unused receiving addresses.
-    pub fn get_unused(&self) -> Addresses {
-        let mut out = Addresses::new();
+    pub fn get_unused(&self) -> Vec<RustAddress> {
         let mut addrs = self
             .store
             .clone()
             .into_iter()
             .filter_map(|(_, entry)| {
                 if entry.status == AddressStatus::NotUsed && entry.account == AddrAccount::Receive {
-                    Some(Box::new(entry.clone()))
+                    Some(entry.clone())
                 } else {
                     None
                 }
@@ -294,8 +293,7 @@ impl AddressStore {
                 .cmp(&b.account)
                 .then_with(|| a.index.cmp(&b.index))
         });
-        out.set(addrs);
-        out
+        addrs.into_iter().map(Into::into).collect()
     }
 
     /// Retrieves all addresses for a specific account type.
@@ -306,15 +304,14 @@ impl AddressStore {
     /// # Returns
     /// An `Addresses` object containing all addresses for the specified
     /// account type.
-    pub fn get(&self, account: AddrAccount) -> Addresses {
-        let mut out = Addresses::new();
+    pub fn get(&self, account: AddrAccount) -> Vec<RustAddress> {
         let mut addrs = self
             .store
             .clone()
             .into_iter()
             .filter_map(|(_, entry)| {
                 if entry.account == account {
-                    Some(Box::new(entry.clone()))
+                    Some(entry.clone())
                 } else {
                     None
                 }
@@ -325,8 +322,7 @@ impl AddressStore {
                 .cmp(&b.account)
                 .then_with(|| a.index.cmp(&b.index))
         });
-        out.set(addrs);
-        out
+        addrs.into_iter().map(Into::into).collect()
     }
 
     /// Dumps the address store as a JSON value.
@@ -441,5 +437,16 @@ impl AddressEntry {
     /// A `Box<Self>` containing the cloned address entry.
     pub fn clone_boxed(&self) -> Box<Self> {
         Box::new(self.clone())
+    }
+}
+
+impl From<AddressEntry> for RustAddress {
+    fn from(value: AddressEntry) -> Self {
+        RustAddress {
+            address: value.address().assume_checked().to_string(),
+            status: value.status(),
+            account: value.account(),
+            index: value.index(),
+        }
     }
 }
