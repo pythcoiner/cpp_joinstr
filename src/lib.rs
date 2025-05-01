@@ -376,4 +376,58 @@ impl From<u32> for AddrAccount {
 
 result!(PsbtResult, String);
 
-result!(PoolsResult, Vec<RustPool>);
+#[derive(Debug, Clone)]
+pub struct PoolsResult {
+    relay: String,
+    value: Option<Vec<RustPool>>,
+    error: Option<String>,
+}
+
+impl PoolsResult {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self {
+            value: None,
+            error: None,
+            relay: String::new(),
+        }
+    }
+    pub fn ok(value: Vec<RustPool>) -> Self {
+        Self {
+            value: Some(value),
+            error: None,
+            relay: String::new(),
+        }
+    }
+    pub fn err(error: &str) -> Self {
+        Self {
+            value: None,
+            error: Some(error.into()),
+            relay: String::new(),
+        }
+    }
+    pub fn is_ok(&self) -> bool {
+        self.value.is_some() && self.error.is_none()
+    }
+    pub fn is_err(&self) -> bool {
+        self.value.is_none() && self.error.is_some()
+    }
+    pub fn value(&self) -> Vec<RustPool> {
+        self.value.clone().unwrap()
+    }
+    pub fn error(&self) -> String {
+        self.error.clone().unwrap()
+    }
+    pub fn boxed(&self) -> Box<Self> {
+        Box::new(self.clone())
+    }
+}
+impl From<&str> for Box<PoolsResult> {
+    fn from(value: &str) -> Box<PoolsResult> {
+        Box::new(PoolsResult {
+            value: None,
+            error: Some(value.into()),
+            relay: String::new(),
+        })
+    }
+}

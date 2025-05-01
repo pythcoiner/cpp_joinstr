@@ -615,13 +615,15 @@ impl Account {
     ///
     /// A boxed `Pools` instance containing the available pools.
     pub fn pools(&self) -> Box<PoolsResult> {
-        match self.pool_store.try_lock() {
+        let mut pools = match self.pool_store.try_lock() {
             Ok(lock) => {
                 let pools = lock.available_pools();
-                Box::new(PoolsResult::ok(pools))
+                PoolsResult::ok(pools)
             }
-            Err(_) => Box::new(PoolsResult::err("PoolStore locked")),
-        }
+            Err(_) => PoolsResult::err("PoolStore locked"),
+        };
+        pools.relay = self.relay();
+        Box::new(pools)
     }
 
     /// Creates a new pool with the specified parameters.
