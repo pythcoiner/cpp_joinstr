@@ -196,7 +196,8 @@ pub mod cpp_joinstr {
     #[derive(Debug, Clone)]
     pub struct RustPool {
         denomination: u64,
-        peers: usize,
+        total_peers: usize,
+        current_peers: usize,
         relay: String,
         fees: u32,
         id: String,

@@ -91,7 +91,8 @@ impl From<nostr::Pool> for RustPool {
         let payload = value.payload.expect("have a payload");
         RustPool {
             denomination: payload.denomination.to_sat(),
-            peers: payload.peers,
+            total_peers: payload.peers,
+            current_peers: 0,
             relay: payload
                 .relays
                 .first()
