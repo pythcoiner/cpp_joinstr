@@ -553,7 +553,8 @@ impl CoinStore {
     /// This method filters the coins that are either unconfirmed or
     /// confirmed and returns them as a `Coins` object.
     pub fn spendable_coins(&self) -> Vec<RustCoin> {
-        self.store
+        let mut coins: Vec<_> = self
+            .store
             .clone()
             .into_iter()
             .filter_map(|(_, coin)| match coin.status {
@@ -567,7 +568,9 @@ impl CoinStore {
                 CoinStatus::Spent => None,
                 _ => unreachable!(),
             })
-            .collect()
+            .collect();
+        coins.sort();
+        coins
     }
 
     /// Returns all coins in the store.
