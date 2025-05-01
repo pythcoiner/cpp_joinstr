@@ -1,7 +1,7 @@
 clean:
     rm -fRd target
     rm -fRd include
-    rm Cargo.lock
+    rm -f Cargo.lock
 
 build:
     just clean
