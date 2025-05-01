@@ -1,4 +1,4 @@
-use crate::{cpp_joinstr::PoolStatus, Pool, Pools};
+use crate::cpp_joinstr::{PoolStatus, RustPool};
 use joinstr::nostr::{self};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -36,39 +36,31 @@ impl PoolStore {
     ///
     /// # Arguments
     /// * `status` - The status to filter pools by.
-    pub fn get_by_status(&self, status: PoolStatus) -> Pools {
-        let mut out = Pools::new();
-        let pools = self
-            .store
+    pub fn get_by_status(&self, status: PoolStatus) -> Vec<RustPool> {
+        self.store
             .clone()
             .into_iter()
             .filter_map(|(_, pool)| {
                 if pool.status == status {
-                    Some(pool.pool())
+                    Some(pool.pool().into())
                 } else {
                     None
                 }
             })
-            .collect::<Vec<_>>();
-        out.set(pools);
-        out
+            .collect::<Vec<_>>()
     }
 
     /// Retrieves all available pools.
-    pub fn available_pools(&self) -> Pools {
-        let mut out = Pools::new();
-        let pools = self
-            .store
+    pub fn available_pools(&self) -> Vec<RustPool> {
+        self.store
             .clone()
             .into_iter()
             .filter_map(|(_, entry)| match entry.status {
-                PoolStatus::Available => Some(entry.pool()),
-                PoolStatus::Closed | PoolStatus::Processing => None,
+                PoolStatus::Available | PoolStatus::Processing => Some(entry.pool().into()),
+                PoolStatus::Closed => None,
                 _ => unreachable!(),
             })
-            .collect();
-        out.set(pools);
-        out
+            .collect()
     }
 }
 
@@ -88,8 +80,32 @@ impl PoolEntry {
     pub fn status(&self) -> PoolStatus {
         self.status
     }
-    /// Returns a boxed clone of the pool.
-    pub fn pool(&self) -> Box<Pool> {
-        Box::new(self.pool.clone().into())
+    /// Returns the a clone of the pool
+    pub fn pool(&self) -> nostr::Pool {
+        self.pool.clone()
+    }
+}
+
+impl From<nostr::Pool> for RustPool {
+    fn from(value: nostr::Pool) -> Self {
+        let payload = value.payload.expect("have a payload");
+        RustPool {
+            denomination: payload.denomination.to_sat(),
+            peers: payload.peers,
+            relay: payload
+                .relays
+                .first()
+                .expect("always have a relay")
+                .to_string(),
+            fees: match payload.fee {
+                nostr::Fee::Fixed(f) => f,
+                nostr::Fee::Provider(_) => unreachable!(),
+            },
+            id: value.id,
+            timeout: match payload.timeout {
+                nostr::Timeline::Simple(t) => t,
+                _ => unreachable!(),
+            },
+        }
     }
 }

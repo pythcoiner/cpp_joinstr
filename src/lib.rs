@@ -7,7 +7,6 @@ pub mod derivator;
 pub mod label_store;
 pub mod macros;
 pub mod mnemonic;
-pub mod pool;
 pub mod pool_store;
 pub mod signer;
 pub mod signing_manager;
@@ -25,7 +24,6 @@ pub use config::{
 };
 use joinstr::miniscript::bitcoin;
 pub use mnemonic::{generate_mnemonic, mnemonic_from_string, Mnemonic};
-pub use pool::Pool;
 
 #[cxx::bridge]
 pub mod cpp_joinstr {
@@ -182,17 +180,6 @@ pub mod cpp_joinstr {
     }
 
     extern "Rust" {
-        #[rust_name = Pools]
-        type RustPools;
-        fn is_ok(&self) -> bool;
-        fn is_err(&self) -> bool;
-        fn error(&self) -> String;
-        fn count(&self) -> usize;
-        fn is_empty(&self) -> bool;
-        fn get(&self, index: usize) -> Box<Pool>;
-    }
-
-    extern "Rust" {
         #[rust_name = AddressEntry]
         type RustAddress;
         fn status(&self) -> AddressStatus;
@@ -222,16 +209,22 @@ pub mod cpp_joinstr {
         fn value(&self) -> String;
     }
 
+    #[derive(Debug, Clone)]
+    pub struct RustPool {
+        denomination: u64,
+        peers: usize,
+        relay: String,
+        fees: u32,
+        id: String,
+        timeout: u64,
+    }
+
     extern "Rust" {
-        #[rust_name = Pool]
-        type RustPool;
-        fn denomination_sat(&self) -> u64;
-        fn denomination_btc(&self) -> f64;
-        fn peers(&self) -> usize;
-        fn relay(&self) -> String;
-        fn fees(&self) -> u32;
-        fn id(&self) -> String;
-        fn timeout(&self) -> u64;
+        type PoolsResult;
+        fn is_ok(&self) -> bool;
+        fn is_err(&self) -> bool;
+        fn value(&self) -> Vec<RustPool>;
+        fn error(&self) -> String;
     }
 
     extern "Rust" {
@@ -250,7 +243,7 @@ pub mod cpp_joinstr {
         fn recv_addr_at(&self, index: u32) -> String;
         fn change_addr_at(&self, index: u32) -> String;
         fn prepare_transaction(&mut self, tx_template: TransactionTemplate) -> Box<PsbtResult>;
-        fn pools(&self) -> Box<Pools>;
+        fn pools(&self) -> Box<PoolsResult>;
         fn create_pool(
             &mut self,
             outpoint: String,
@@ -260,7 +253,7 @@ pub mod cpp_joinstr {
             peers: usize,
         );
         fn join_pool(&mut self, outpoint: String, pool_id: String);
-        fn pool(&mut self, pool_id: String) -> Box<Pool>;
+        fn pool(&mut self, pool_id: String) -> Box<RustPool>;
         fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32);
         fn try_recv(&mut self) -> Box<Poll>;
         fn relay(&self) -> String;
@@ -286,7 +279,7 @@ pub mod cpp_joinstr {
     }
 }
 
-use cpp_joinstr::{AddrAccount, LogLevel, Network, SignalFlag};
+use cpp_joinstr::{AddrAccount, LogLevel, Network, RustPool, SignalFlag};
 
 impl Network {
     pub fn boxed(&self) -> Box<Network> {
@@ -329,21 +322,6 @@ impl Coins {
     }
 
     pub fn get(&self, index: usize) -> Box<CoinEntry> {
-        self.inner.as_ref().unwrap().get(index).unwrap().clone()
-    }
-}
-
-results!(Pools, Vec<Box<Pool>>);
-impl Pools {
-    pub fn count(&self) -> usize {
-        self.inner.as_ref().map(|v| v.len()).unwrap_or(0)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.count() != 0
-    }
-
-    pub fn get(&self, index: usize) -> Box<Pool> {
         self.inner.as_ref().unwrap().get(index).unwrap().clone()
     }
 }
@@ -446,3 +424,5 @@ impl From<u32> for AddrAccount {
 }
 
 result!(PsbtResult, String);
+
+result!(PoolsResult, Vec<RustPool>);

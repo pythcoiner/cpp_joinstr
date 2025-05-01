@@ -23,13 +23,15 @@ use crate::{
     address_store::{AddressEntry, AddressTip},
     coin_store::{CoinEntry, CoinStore},
     config::Tip,
-    cpp_joinstr::{AddrAccount, AddressStatus, PoolStatus, SignalFlag, TransactionTemplate},
+    cpp_joinstr::{
+        AddrAccount, AddressStatus, PoolStatus, RustPool, SignalFlag, TransactionTemplate,
+    },
     derivator::Derivator,
     label_store::{LabelKey, LabelStore},
     pool_store::PoolStore,
     results,
     tx_store::TxStore,
-    Coins, Config, Pool, Pools, PsbtResult,
+    Coins, Config, PoolsResult, PsbtResult,
 };
 
 results!(Poll, Signal);
@@ -616,14 +618,13 @@ impl Account {
     /// # Returns
     ///
     /// A boxed `Pools` instance containing the available pools.
-    pub fn pools(&self) -> Box<Pools> {
+    pub fn pools(&self) -> Box<PoolsResult> {
         match self.pool_store.try_lock() {
-            Ok(lock) => Box::new(lock.available_pools()),
-            Err(_) => {
-                let mut pools = Pools::new();
-                pools.set_error("PoolStore Locked".to_string());
-                Box::new(pools)
+            Ok(lock) => {
+                let pools = lock.available_pools();
+                Box::new(PoolsResult::ok(pools))
             }
+            Err(_) => Box::new(PoolsResult::err("PoolStore locked")),
         }
     }
 
@@ -666,7 +667,7 @@ impl Account {
     /// # Returns
     ///
     /// A boxed `Pool` instance.
-    pub fn pool(&mut self, _pool_id: String) -> Box<Pool> {
+    pub fn pool(&mut self, _pool_id: String) -> Box<RustPool> {
         todo!()
     }
 
