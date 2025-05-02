@@ -30,14 +30,14 @@ pub mod cpp_joinstr {
     pub struct TransactionTemplate {
         inputs: Vec<String /* outpoint */>,
         outputs: Vec<Output>,
-        fee: u64,
+        fee: u64, // fee in sats (NOT sats/vb)
     }
 
     pub struct Output {
         address: String,
-        amount: u64,
+        amount: u64, // amount in sats
         label: String,
-        max: bool,
+        max: bool, // if max == true, amount is not taken in account,
     }
 
     #[derive(Debug, Clone, Copy)]
