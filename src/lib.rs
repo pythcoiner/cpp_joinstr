@@ -30,11 +30,14 @@ pub mod cpp_joinstr {
     pub struct TransactionTemplate {
         inputs: Vec<String /* outpoint */>,
         outputs: Vec<Output>,
+        fee: u64,
     }
 
     pub struct Output {
         address: String,
         amount: u64,
+        label: String,
+        max: bool,
     }
 
     #[derive(Debug, Clone, Copy)]
