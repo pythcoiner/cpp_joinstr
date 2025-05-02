@@ -28,7 +28,7 @@ pub use mnemonic::{generate_mnemonic, mnemonic_from_string, Mnemonic};
 pub mod cpp_joinstr {
 
     pub struct TransactionTemplate {
-        inputs: Vec<String /* outpoint */>,
+        inputs: Vec<RustCoin>,
         outputs: Vec<Output>,
         fee: u64, // fee in sats (NOT sats/vb)
     }

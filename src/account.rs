@@ -493,7 +493,7 @@ impl Account {
     pub fn prepare_transaction(&mut self, tx_template: TransactionTemplate) -> Box<PsbtResult> {
         let mut outpoints = vec![];
         for inp in tx_template.inputs {
-            let parsed: Result<bitcoin::OutPoint, _> = serde_json::from_str(&inp);
+            let parsed: Result<bitcoin::OutPoint, _> = serde_json::from_str(&inp.outpoint);
             match parsed {
                 Ok(op) => outpoints.push(op),
                 Err(_) => return "Fail to parse Outpoint".into(),
