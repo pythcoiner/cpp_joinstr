@@ -491,6 +491,9 @@ impl Account {
     ///
     /// A boxed PsbtResult containing the PSBT or the error string.
     pub fn prepare_transaction(&mut self, tx_template: TransactionTemplate) -> Box<PsbtResult> {
+        // TODO: take output MAX in account
+        // TODO: add a change when needed
+        // TODO: handle fees
         let mut outpoints = vec![];
         for inp in tx_template.inputs {
             let parsed: Result<bitcoin::OutPoint, _> = serde_json::from_str(&inp.outpoint);
