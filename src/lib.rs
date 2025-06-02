@@ -127,7 +127,7 @@ pub mod cpp_joinstr {
         fn config_exists(account: String) -> bool;
         fn set_account(&mut self, name: String);
         fn is_descriptor_valid(descriptor: String) -> bool;
-        fn new_config(descriptor: String) -> Box<Config>;
+        fn new_config(mnemonic: String, account: String, network: Network) -> Box<Config>;
     }
 
     extern "Rust" {

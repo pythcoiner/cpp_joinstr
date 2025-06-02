@@ -9,13 +9,16 @@ use std::{
 use joinstr::{
     bip39::Mnemonic,
     miniscript::{
-        bitcoin::{self, ScriptBuf},
+        bitcoin::{self, bip32::DerivationPath, ScriptBuf},
         Descriptor, DescriptorPublicKey,
     },
 };
 use serde::{Deserialize, Serialize};
 
-use crate::cpp_joinstr::Network;
+use crate::{
+    cpp_joinstr::Network,
+    signer::{wpkh, HotSigner},
+};
 
 const CONFIG_FILENAME: &str = "config.json";
 
@@ -296,23 +299,32 @@ pub fn is_descriptor_valid(descriptor: String) -> bool {
 ///
 /// # Arguments
 ///
-/// * `descriptor` - A string representing the descriptor to set in the config.
+/// * `mnemonic` - A string representing the mnemonic words.
+/// * `account` - A string representing the account name.
+/// * `network` - the bitcoin network for this config.
 ///
 /// # Returns
 ///
 /// A `Box<Config>` instance initialized with the provided descriptor.
-pub fn new_config(descriptor: String) -> Box<Config> {
-    let descriptor = Descriptor::from_str(&descriptor).expect("must be checked");
-
+pub fn new_config(mnemonic: String, account: String, network: Network) -> Box<Config> {
+    let signer = HotSigner::new_from_mnemonics(network.into(), &mnemonic).unwrap();
+    let n_path = match network {
+        Network::Bitcoin => 0,
+        _ => 1,
+    };
+    let a_path = 0;
+    let deriv_path = DerivationPath::from_str(&format!("m/84'/{}/{}", n_path, a_path)).unwrap();
+    let oxpub = signer.xpub(&deriv_path);
+    let descriptor = wpkh(oxpub);
     Config {
-        account: String::new(),
+        account,
         electrum_url: None,
         electrum_port: None,
         nostr_relay: None,
         nostr_back: None,
-        network: bitcoin::Network::Bitcoin,
+        network: network.into(),
         look_ahead: 20,
-        mnemonic: String::new(),
+        mnemonic,
         descriptor,
     }
     .boxed()
