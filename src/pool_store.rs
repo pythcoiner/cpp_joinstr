@@ -139,7 +139,12 @@ impl PoolStore {
                 }
             };
             j.start_coinjoin(None, Some(signer));
-            let pool = j.state().expect("must have a state").pool.clone();
+            let pool = loop {
+                match j.state() {
+                    Some(s) => break s.pool.clone(),
+                    None => thread::sleep(Duration::from_millis(100)),
+                }
+            };
             let pool_id = pool.id.clone();
             let pool_entry = PoolEntry {
                 status: PoolStatus::Available,
