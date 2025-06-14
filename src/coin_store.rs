@@ -686,7 +686,7 @@ impl Update {
 pub struct CoinEntry {
     height: Option<u64>,
     status: CoinStatus,
-    coin: coin::Coin,
+    pub coin: coin::Coin,
     address: bitcoin::Address<NetworkUnchecked>,
     label: Option<String>,
 }

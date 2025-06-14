@@ -12,15 +12,16 @@ use std::{
 use joinstr::{
     electrum::{CoinRequest, CoinResponse},
     miniscript::{
-        bitcoin::{self, absolute, EcdsaSighashType, OutPoint, ScriptBuf},
+        bitcoin::{self, absolute, Amount, EcdsaSighashType, OutPoint, ScriptBuf},
         psbt::PsbtExt,
     },
-    nostr::{self, error, sync::NostrClient},
+    nostr::{self, error, sync::NostrClient, Pool},
     simple_nostr_client::nostr::key::Keys,
 };
 
 use crate::{
     address_store::{AddressEntry, AddressTip},
+    coin::Coin,
     coin_store::{CoinEntry, CoinStore},
     config::Tip,
     cpp_joinstr::{
@@ -128,13 +129,14 @@ impl Signal {
 #[derive(Debug)]
 pub enum Notification {
     Electrum(TxListenerNotif),
-    Joinstr(PoolListenerNotif),
+    Joinstr(JoinstrNotif),
     AddressTipChanged,
     CoinUpdate,
     InvalidElectrumConfig,
     InvalidNostrConfig,
     InvalidLookAhead,
     Stopped,
+    Error(Error),
 }
 
 impl From<TxListenerNotif> for Notification {
@@ -143,9 +145,33 @@ impl From<TxListenerNotif> for Notification {
     }
 }
 
-impl From<PoolListenerNotif> for Notification {
-    fn from(value: PoolListenerNotif) -> Self {
+impl From<JoinstrNotif> for Notification {
+    fn from(value: JoinstrNotif) -> Self {
         Notification::Joinstr(value)
+    }
+}
+
+impl From<joinstr::joinstr::Error> for Notification {
+    fn from(value: joinstr::joinstr::Error) -> Self {
+        Notification::Joinstr(JoinstrNotif::Error(Error::Joinstr(value)))
+    }
+}
+
+impl From<joinstr::signer::Error> for Notification {
+    fn from(value: joinstr::signer::Error) -> Self {
+        Notification::Joinstr(JoinstrNotif::Error(Error::Signer(value)))
+    }
+}
+
+impl From<nostr::error::Error> for Notification {
+    fn from(value: nostr::error::Error) -> Self {
+        Notification::Joinstr(JoinstrNotif::Error(Error::Nostr(value)))
+    }
+}
+
+impl From<Error> for Notification {
+    fn from(value: Error) -> Self {
+        Self::Error(value)
     }
 }
 
@@ -167,14 +193,14 @@ impl Notification {
                 TxListenerNotif::Stopped => signal.set(SignalFlag::TxListenerStopped),
             },
             Notification::Joinstr(notif) => match notif {
-                PoolListenerNotif::Started => signal.set(SignalFlag::PoolListenerStarted),
-                PoolListenerNotif::PoolUpdate => signal.set(SignalFlag::PoolUpdate),
-                PoolListenerNotif::Stopped => signal.set(SignalFlag::PoolListenerStopped),
-                PoolListenerNotif::Error(e) => {
+                JoinstrNotif::Started => signal.set(SignalFlag::PoolListenerStarted),
+                JoinstrNotif::PoolUpdate => signal.set(SignalFlag::PoolUpdate),
+                JoinstrNotif::Stopped => signal.set(SignalFlag::PoolListenerStopped),
+                JoinstrNotif::Error(e) => {
                     signal.set(SignalFlag::PoolListenerError);
                     signal.set_error(format!("{e:?}"));
                 }
-                PoolListenerNotif::Stop => unreachable!(),
+                JoinstrNotif::Stop => unreachable!(),
             },
             Notification::AddressTipChanged => signal.set(SignalFlag::AddressTipChanged),
             Notification::CoinUpdate => signal.set(SignalFlag::CoinUpdate),
@@ -191,6 +217,10 @@ impl Notification {
                 signal.set(SignalFlag::AccountError);
                 signal.set_error("Invalid look_ahead value".to_string());
             }
+            Notification::Error(e) => {
+                signal.set(SignalFlag::Error);
+                signal.set_error(format!("{e:?}"));
+            }
         }
         signal
     }
@@ -199,6 +229,16 @@ impl Notification {
 #[derive(Debug)]
 pub enum Error {
     Nostr(nostr::error::Error),
+    Joinstr(joinstr::joinstr::Error),
+    Signer(joinstr::signer::Error),
+    CreatePool,
+    JoinPool,
+    InvalidOutPoint,
+    CoinMissing,
+    InvalidDenomination,
+    RelayMissing,
+    WrongElectrumConfig,
+    PoolMissing,
 }
 
 impl From<nostr::error::Error> for Error {
@@ -216,7 +256,7 @@ pub enum TxListenerNotif {
 }
 
 #[derive(Debug)]
-pub enum PoolListenerNotif {
+pub enum JoinstrNotif {
     Started,
     PoolUpdate,
     Stopped,
@@ -224,9 +264,9 @@ pub enum PoolListenerNotif {
     Error(Error),
 }
 
-impl From<nostr::error::Error> for PoolListenerNotif {
+impl From<nostr::error::Error> for JoinstrNotif {
     fn from(value: nostr::error::Error) -> Self {
-        PoolListenerNotif::Error(Error::Nostr(value))
+        JoinstrNotif::Error(Error::Nostr(value))
     }
 }
 
@@ -285,9 +325,10 @@ impl Account {
             Some(config.clone()),
         )));
         coin_store.lock().expect("poisoned").generate();
+        let pool_store = Arc::new(Mutex::new(PoolStore::new()));
         let mut account = Account {
             coin_store,
-            pool_store: Default::default(),
+            pool_store,
             label_store,
             tx_listener: None,
             pool_listener: None,
@@ -485,6 +526,15 @@ impl Account {
         self.coin_store.lock().expect("poisoned").spendable_coins()
     }
 
+    /// Returns the coin matching the given outpoint if found, else None.
+    pub fn get_coin(&self, outpoint: &OutPoint) -> Option<Coin> {
+        self.coin_store
+            .lock()
+            .expect("poisoned")
+            .get(outpoint)
+            .map(|e| e.coin)
+    }
+
     /// Prepare a PSBT ready to sign from a `TransactionTemplate`.
     ///
     /// # Returns
@@ -633,20 +683,60 @@ impl Account {
     ///
     /// # Arguments
     ///
-    /// * `_outpoint` - The outpoint for the pool.
-    /// * `_denomination` - The denomination of the pool.
-    /// * `_fee` - The fee for the pool.
-    /// * `_max_duration` - The maximum duration of the pool.
-    /// * `_peers` - The number of peers in the pool.
+    /// * `outpoint` - The outpoint for the pool.
+    /// * `denomination` - The denomination of the pool.
+    /// * `fee` - The fee for the pool.
+    /// * `max_duration` - The maximum duration of the pool.
+    /// * `peers` - The number of peers in the pool.
+    /// * `coin` - the outpoint of the coin to coinjoin.
+    pub fn rust_create_pool(
+        &mut self,
+        outpoint: String,
+        denomination: u64,
+        fee: u32,
+        timeout: u64,
+        peers: usize,
+    ) -> Result<(), Error> {
+        let op = OutPoint::from_str(&outpoint).map_err(|_| Error::InvalidOutPoint)?;
+        let coin = self.get_coin(&op).ok_or(Error::CoinMissing)?;
+        let denomination = Amount::from_sat(denomination).to_btc();
+        let address = self.new_recv_addr().as_unchecked().clone();
+        let relay = self.config.nostr_relay.clone().ok_or(Error::RelayMissing)?;
+        let electrum = if let (Some(url), Some(port)) =
+            (self.config.electrum_url.clone(), self.config.electrum_port)
+        {
+            (url, port)
+        } else {
+            return Err(Error::WrongElectrumConfig);
+        };
+        PoolStore::create_pool(
+            denomination,
+            fee,
+            timeout,
+            peers,
+            coin,
+            address,
+            self.config.mnemonic.clone(),
+            relay,
+            electrum,
+            self.config.network,
+            self.pool_store.clone(),
+            self.sender.clone(),
+        );
+        Ok(())
+    }
+
     pub fn create_pool(
         &mut self,
-        _outpoint: String,
-        _denomination: f64,
-        _fee: u32,
-        _max_duration: u64,
-        _peers: usize,
+        outpoint: String,
+        denomination: u64,
+        fee: u32,
+        timeout: u64,
+        peers: usize,
     ) {
-        todo!()
+        if let Err(e) = self.rust_create_pool(outpoint, denomination, fee, timeout, peers) {
+            let _ = self.sender.send(e.into());
+        }
     }
 
     /// Joins an existing pool with the specified outpoint and pool ID.
@@ -655,8 +745,37 @@ impl Account {
     ///
     /// * `_outpoint` - The outpoint for the pool.
     /// * `_pool_id` - The ID of the pool to join.
-    pub fn join_pool(&mut self, _outpoint: String, _pool_id: String) {
-        todo!()
+    pub fn rust_join_pool(&mut self, outpoint: String, pool_id: String) -> Result<(), Error> {
+        let op = OutPoint::from_str(&outpoint).map_err(|_| Error::InvalidOutPoint)?;
+        let coin = self.get_coin(&op).ok_or(Error::CoinMissing)?;
+        let relay = self.config.nostr_relay.clone().ok_or(Error::RelayMissing)?;
+        let electrum = if let (Some(url), Some(port)) =
+            (self.config.electrum_url.clone(), self.config.electrum_port)
+        {
+            (url, port)
+        } else {
+            return Err(Error::WrongElectrumConfig);
+        };
+        let address = self.new_recv_addr().as_unchecked().clone();
+        let pool = self.rust_pool(pool_id).ok_or(Error::PoolMissing)?;
+        PoolStore::join_pool(
+            relay,
+            electrum,
+            pool,
+            self.config.mnemonic.clone(),
+            self.config.network,
+            self.pool_store.clone(),
+            self.sender.clone(),
+            coin,
+            address,
+        );
+        Ok(())
+    }
+
+    pub fn join_pool(&mut self, outpoint: String, pool_id: String) {
+        if let Err(e) = self.rust_join_pool(outpoint, pool_id) {
+            let _ = self.sender.send(e.into());
+        }
     }
 
     /// Retrieves a pool with the specified pool ID.
@@ -668,8 +787,25 @@ impl Account {
     /// # Returns
     ///
     /// A boxed `Pool` instance.
-    pub fn pool(&mut self, _pool_id: String) -> Box<RustPool> {
-        todo!()
+    pub fn pool(&mut self, pool_id: String) -> Box<RustPool> {
+        let entry = self
+            .pool_store
+            .lock()
+            .expect("poisoned")
+            .get(&pool_id)
+            .map(|e| e.pool())
+            .unwrap();
+        let pool = entry.into();
+
+        Box::new(pool)
+    }
+
+    pub fn rust_pool(&mut self, pool_id: String) -> Option<Pool> {
+        self.pool_store
+            .lock()
+            .expect("poisoned")
+            .get(&pool_id)
+            .map(|e| e.pool())
     }
 
     /// Sets the Electrum server URL and port for the account.
@@ -787,7 +923,7 @@ impl Account {
                 if let Notification::Electrum(TxListenerNotif::Stopped) = &notif {
                     self.electrum_stop = None;
                     self.tx_listener = None;
-                } else if let Notification::Joinstr(PoolListenerNotif::Stopped) = &notif {
+                } else if let Notification::Joinstr(JoinstrNotif::Stopped) = &notif {
                     self.nostr_stop = None;
                     self.pool_listener = None;
                 }
@@ -886,12 +1022,13 @@ impl Account {
     /// * `peers` - The number of peers in the pool.
     /// * `timeout` - The timeout for the pool.
     /// * `fee` - The fee for the pool.
-    pub fn create_dummy_pool(&self, denomination: u64, peers: usize, timeout: u64, fee: u32) {
+    pub fn create_dummy_pool(&self, _denomination: u64, _peers: usize, _timeout: u64, _fee: u32) {
         if let Some(nostr_relay) = &self.config.nostr_relay {
-            let relay = nostr_relay.clone();
-            let network = self.config.network;
+            let _relay = nostr_relay.clone();
+            let _network = self.config.network;
             thread::spawn(move || {
-                dummy_pool(relay, denomination, peers, timeout, fee, network);
+                // TODO:
+                // dummy_pool(relay, denomination, peers, timeout, fee, network);
             });
         }
     }
@@ -1191,7 +1328,7 @@ fn listen_txs<T: From<TxListenerNotif>>(
 /// * `sender` - The sender for notifications.
 /// * `back` - The number of past events to retrieve.
 /// * `stop_request` - The stop flag for the listener.
-fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
+fn pool_listener<N: From<JoinstrNotif> + Send + 'static>(
     relay: String,
     pool_store: Arc<Mutex<PoolStore>>,
     sender: mpsc::Sender<N>,
@@ -1206,13 +1343,13 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
 
     if let Err(e) = pool_listener.connect_nostr() {
         log::error!("pool_listener() fail to connect to nostr relay: {e:?}");
-        let msg: PoolListenerNotif = e.into();
+        let msg: JoinstrNotif = e.into();
         let _ = sender.send(msg.into());
         return;
     }
     if let Err(e) = pool_listener.subscribe_pools(back) {
         log::error!("pool_listener() fail to subscribe to pool notifications: {e:?}");
-        let msg: PoolListenerNotif = e.into();
+        let msg: JoinstrNotif = e.into();
         let _ = sender.send(msg.into());
         return;
     }
@@ -1220,7 +1357,7 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
     loop {
         if stop_request.load(Ordering::Relaxed) {
             log::error!("pool_listener() stop requested");
-            let msg = PoolListenerNotif::Stopped;
+            let msg = JoinstrNotif::Stopped;
             let _ = sender.send(msg.into());
             return;
         }
@@ -1243,9 +1380,9 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
 
                     if let Err(e) = pool_listener.connect_nostr() {
                         log::error!("pool_listener() fail to reconnect: {e:?}");
-                        let msg: PoolListenerNotif = e.into();
+                        let msg: JoinstrNotif = e.into();
                         let _ = sender.send(msg.into());
-                        let msg = PoolListenerNotif::Stopped;
+                        let msg = JoinstrNotif::Stopped;
                         let _ = sender.send(msg.into());
                         return;
                     }
@@ -1253,9 +1390,9 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
                         log::error!(
                             "pool_listener() fail to subscribe to pool notifications: {e:?}"
                         );
-                        let msg: PoolListenerNotif = e.into();
+                        let msg: JoinstrNotif = e.into();
                         let _ = sender.send(msg.into());
-                        let msg = PoolListenerNotif::Stopped;
+                        let msg = JoinstrNotif::Stopped;
                         let _ = sender.send(msg.into());
                         return;
                     }
@@ -1264,9 +1401,9 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
                 }
                 e => {
                     log::error!("pool_listener() unexpected error: {e:?}");
-                    let msg: PoolListenerNotif = e.into();
+                    let msg: JoinstrNotif = e.into();
                     let _ = sender.send(msg.into());
-                    let msg = PoolListenerNotif::Stopped;
+                    let msg = JoinstrNotif::Stopped;
                     let _ = sender.send(msg.into());
                     return;
                 }
@@ -1275,44 +1412,10 @@ fn pool_listener<N: From<PoolListenerNotif> + Send + 'static>(
         {
             let mut store = pool_store.lock().expect("poisoned");
             store.update(pool, PoolStatus::Available);
-            if sender.send(PoolListenerNotif::PoolUpdate.into()).is_err() {
+            if sender.send(JoinstrNotif::PoolUpdate.into()).is_err() {
                 return;
             }
         } // release store lock
-    }
-}
-
-/// Creates a dummy pool with the specified parameters and broadcasts it.
-///
-/// # Arguments
-///
-/// * `relay` - The relay address to connect to.
-/// * `denomination` - The denomination of the pool.
-/// * `peers` - The number of peers in the pool.
-/// * `timeout` - The timeout for the pool.
-/// * `fee` - The fee for the pool.
-/// * `network` - The Bitcoin network to use.
-fn dummy_pool(
-    relay: String,
-    denomination: u64,
-    peers: usize,
-    timeout: u64,
-    fee: u32,
-    network: bitcoin::Network,
-) {
-    let mut client = NostrClient::new("pool_listener")
-        .relay(relay.clone())
-        .unwrap()
-        .keys(Keys::generate())
-        .unwrap();
-    if let Err(e) = client.connect_nostr() {
-        println!("dummy_pool() fail connect nostr relay: {:?}", e);
-    }
-    let key = client.get_keys().expect("have keys").public_key();
-
-    let pool = nostr::Pool::create(relay, denomination, peers, timeout, fee, network, key);
-    if let Err(e) = client.post_event(pool.try_into().expect("valid pool")) {
-        println!("dummy_pool() fail to broadcast pool: {:?}", e);
     }
 }
 

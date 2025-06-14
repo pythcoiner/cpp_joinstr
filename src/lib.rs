@@ -63,6 +63,7 @@ pub mod cpp_joinstr {
         CoinUpdate,
         AccountError,
         Stopped,
+        Error,
     }
 
     extern "Rust" {
@@ -90,6 +91,7 @@ pub mod cpp_joinstr {
         Processing,
         Joined,
         Closed,
+        Error,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
@@ -231,7 +233,7 @@ pub mod cpp_joinstr {
         fn create_pool(
             &mut self,
             outpoint: String,
-            denomination: f64,
+            denomination: u64,
             fee: u32,
             max_duration: u64,
             peers: usize,

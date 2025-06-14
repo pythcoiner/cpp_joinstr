@@ -1,3 +1,4 @@
+use ::joinstr::signer;
 use joinstr::miniscript::bitcoin::{self, Sequence, TxOut};
 use serde::{Deserialize, Serialize};
 
@@ -13,4 +14,19 @@ pub struct Coin {
     pub outpoint: bitcoin::OutPoint,
     pub sequence: Sequence,
     pub coin_path: (AddrAccount, u32),
+}
+
+impl From<Coin> for signer::Coin {
+    fn from(value: Coin) -> Self {
+        let (account, index) = value.coin_path;
+        signer::Coin {
+            txout: value.txout,
+            outpoint: value.outpoint,
+            sequence: value.sequence,
+            coin_path: signer::CoinPath {
+                depth: account.into(),
+                index: Some(index),
+            },
+        }
+    }
 }
