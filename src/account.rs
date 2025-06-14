@@ -1014,25 +1014,6 @@ impl Account {
         }
     }
 
-    /// Creates a dummy pool with the specified parameters.
-    ///
-    /// # Arguments
-    ///
-    /// * `denomination` - The denomination of the pool.
-    /// * `peers` - The number of peers in the pool.
-    /// * `timeout` - The timeout for the pool.
-    /// * `fee` - The fee for the pool.
-    pub fn create_dummy_pool(&self, _denomination: u64, _peers: usize, _timeout: u64, _fee: u32) {
-        if let Some(nostr_relay) = &self.config.nostr_relay {
-            let _relay = nostr_relay.clone();
-            let _network = self.config.network;
-            thread::spawn(move || {
-                // TODO:
-                // dummy_pool(relay, denomination, peers, timeout, fee, network);
-            });
-        }
-    }
-
     /// Returns the Nostr relay URL for the account.
     ///
     /// # Returns
