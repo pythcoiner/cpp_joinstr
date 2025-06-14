@@ -94,6 +94,10 @@ pub mod cpp_joinstr {
         Error,
     }
 
+    extern "Rust" {
+        fn pool_status_to_string(status: PoolStatus) -> String;
+    }
+
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
     pub enum AddrAccount {
         Receive,
@@ -201,6 +205,7 @@ pub mod cpp_joinstr {
         relay: String,
         fees: u32,
         id: String,
+        status: PoolStatus,
         timeout: u64,
     }
 
@@ -264,7 +269,7 @@ pub mod cpp_joinstr {
     }
 }
 
-use cpp_joinstr::{AddrAccount, LogLevel, Network, RustPool, SignalFlag};
+use cpp_joinstr::{AddrAccount, LogLevel, Network, PoolStatus, RustPool, SignalFlag};
 
 impl Network {
     pub fn boxed(&self) -> Box<Network> {
@@ -434,4 +439,14 @@ impl From<&str> for Box<PoolsResult> {
             relay: String::new(),
         })
     }
+}
+
+impl Display for PoolStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+pub fn pool_status_to_string(status: PoolStatus) -> String {
+    status.to_string()
 }

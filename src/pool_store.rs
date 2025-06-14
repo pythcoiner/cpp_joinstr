@@ -71,7 +71,7 @@ impl PoolStore {
             .into_iter()
             .filter_map(|(_, pool)| {
                 if pool.status == status {
-                    Some(pool.pool().into())
+                    Some(pool.into())
                 } else {
                     None
                 }
@@ -85,7 +85,7 @@ impl PoolStore {
             .clone()
             .into_iter()
             .filter_map(|(_, entry)| match entry.status {
-                PoolStatus::Available | PoolStatus::Processing => Some(entry.pool().into()),
+                PoolStatus::Available | PoolStatus::Processing => Some(entry.into()),
                 PoolStatus::Closed => None,
                 _ => unreachable!(),
             })
@@ -357,9 +357,10 @@ impl PoolEntry {
     }
 }
 
-impl From<nostr::Pool> for RustPool {
-    fn from(value: nostr::Pool) -> Self {
-        let payload = value.payload.expect("have a payload");
+impl From<PoolEntry> for RustPool {
+    fn from(value: PoolEntry) -> Self {
+        // let payload = value.payload.expect("have a payload");
+        let payload = value.pool().payload.expect("have a payload");
         RustPool {
             denomination: payload.denomination.to_sat(),
             total_peers: payload.peers,
@@ -373,7 +374,8 @@ impl From<nostr::Pool> for RustPool {
                 nostr::Fee::Fixed(f) => f,
                 nostr::Fee::Provider(_) => unreachable!(),
             },
-            id: value.id,
+            id: value.pool_id(),
+            status: value.status(),
             timeout: match payload.timeout {
                 nostr::Timeline::Simple(t) => t,
                 _ => unreachable!(),

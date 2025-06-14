@@ -793,7 +793,6 @@ impl Account {
             .lock()
             .expect("poisoned")
             .get(&pool_id)
-            .map(|e| e.pool())
             .unwrap();
         let pool = entry.into();
 
