@@ -94,6 +94,10 @@ pub mod cpp_joinstr {
         Error,
     }
 
+    extern "Rust" {
+        fn pool_status_to_string(status: PoolStatus) -> String;
+    }
+
     /// Represents the role of a pool participant
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub enum PoolRole {
@@ -102,9 +106,8 @@ pub mod cpp_joinstr {
         Peer,
         None,
     }
-
     extern "Rust" {
-        fn pool_status_to_string(status: PoolStatus) -> String;
+        fn pool_role_to_string(status: PoolRole) -> String;
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
@@ -279,7 +282,7 @@ pub mod cpp_joinstr {
     }
 }
 
-use cpp_joinstr::{AddrAccount, LogLevel, Network, PoolStatus, RustPool, SignalFlag};
+use cpp_joinstr::{AddrAccount, LogLevel, Network, PoolRole, PoolStatus, RustPool, SignalFlag};
 
 impl Network {
     pub fn boxed(&self) -> Box<Network> {
@@ -458,5 +461,15 @@ impl Display for PoolStatus {
 }
 
 pub fn pool_status_to_string(status: PoolStatus) -> String {
+    status.to_string()
+}
+
+impl Display for PoolRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+pub fn pool_role_to_string(status: PoolRole) -> String {
     status.to_string()
 }
