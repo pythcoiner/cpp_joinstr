@@ -94,6 +94,15 @@ pub mod cpp_joinstr {
         Error,
     }
 
+    /// Represents the role of a pool participant
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub enum PoolRole {
+        Coordinator,
+        Initiator,
+        Peer,
+        None,
+    }
+
     extern "Rust" {
         fn pool_status_to_string(status: PoolStatus) -> String;
     }
@@ -206,6 +215,7 @@ pub mod cpp_joinstr {
         fees: u32,
         id: String,
         status: PoolStatus,
+        role: PoolRole,
         timeout: u64,
     }
 

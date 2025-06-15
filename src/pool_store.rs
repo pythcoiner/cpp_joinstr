@@ -1,7 +1,7 @@
 use crate::{
     account::{Error, JoinstrNotif, Notification},
     coin::Coin,
-    cpp_joinstr::{PoolStatus, RustPool},
+    cpp_joinstr::{PoolRole, PoolStatus, RustPool},
 };
 use joinstr::{
     joinstr::{Joinstr, Step},
@@ -322,15 +322,6 @@ pub fn peer(
     Joinstr::new_peer_with_electrum(relay, &pool, electrum_server, coin, output, network, "peer")
 }
 
-/// Represents the role of a pool participant
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum PoolRole {
-    Coordinator,
-    Initiator,
-    Peer,
-    None,
-}
-
 /// Represents a single pool entry with its status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolEntry {
@@ -376,6 +367,7 @@ impl From<PoolEntry> for RustPool {
             },
             id: value.pool_id(),
             status: value.status(),
+            role: value.role,
             timeout: match payload.timeout {
                 nostr::Timeline::Simple(t) => t,
                 _ => unreachable!(),
