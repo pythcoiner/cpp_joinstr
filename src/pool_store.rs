@@ -4,6 +4,7 @@ use crate::{
     cpp_joinstr::{PoolRole, PoolStatus, RustPool},
 };
 use joinstr::{
+    electrum::short_string,
     joinstr::{Joinstr, Step},
     miniscript::bitcoin::{address::NetworkUnchecked, Address, Network},
     nostr::{self, Pool},
@@ -108,12 +109,14 @@ impl PoolStore {
         store: Arc<Mutex<PoolStore>>,
         sender: mpsc::Sender<Notification>,
     ) {
+        log::debug!("PoolStore::create_pool()");
         let cloned_store = store.clone();
         let (id_sender, id_recv) = mpsc::channel::<Option<String>>();
         let cloned_sender = sender.clone();
         let signer = match joinstr::signer::WpkhHotSigner::new_from_mnemonics(network, &mnemonic) {
             Ok(s) => s,
             Err(e) => {
+                log::error!("PoolStore::create_pool() fail to create signer: {e}");
                 let _ = id_sender.send(None);
                 let _ = sender.send(e.into());
                 return;
@@ -133,19 +136,28 @@ impl PoolStore {
             ) {
                 Ok(j) => j,
                 Err(e) => {
+                    log::error!("PoolStore::create_pool() fail create initiator: {e:?}");
                     let _ = id_sender.send(None);
                     let _ = sender.send(e.into());
                     return;
                 }
             };
+            log::info!("PoolStore::create_pool() start coinjoin...");
             j.start_coinjoin(None, Some(signer));
             let pool = loop {
                 match j.state() {
                     Some(s) => break s.pool.clone(),
-                    None => thread::sleep(Duration::from_millis(100)),
+                    None => {
+                        log::debug!(
+                            "PoolStore::create_pool() initiator not yet have state, waiting..."
+                        );
+                        thread::sleep(Duration::from_millis(100))
+                    }
                 }
             };
             let pool_id = pool.id.clone();
+            let short_id = short_string(pool_id.clone());
+            log::info!("PoolStore::create_pool() pool created with id {short_id}");
             let pool_entry = PoolEntry {
                 status: PoolStatus::Available,
                 pool,
@@ -171,6 +183,9 @@ impl PoolStore {
                     Some(s) => s == step,
                 };
                 if update_step {
+                    if last_step != Some(step) {
+                        log::info!("PoolStore::create_pool() step for pool {short_id} changed: {last_step:?} => {step:?} ");
+                    }
                     last_step = Some(step);
                     store
                         .lock()
