@@ -313,7 +313,7 @@ pub fn new_config(mnemonic: String, account: String, network: Network) -> Box<Co
         _ => 1,
     };
     let a_path = 0;
-    let deriv_path = DerivationPath::from_str(&format!("m/84'/{}/{}", n_path, a_path)).unwrap();
+    let deriv_path = DerivationPath::from_str(&format!("m/84'/{}'/{}'", n_path, a_path)).unwrap();
     let oxpub = signer.xpub(&deriv_path);
     let descriptor = wpkh(oxpub);
     Config {
