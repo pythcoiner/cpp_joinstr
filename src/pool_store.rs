@@ -229,24 +229,29 @@ impl PoolStore {
         coin: Coin,
         address: Address<NetworkUnchecked>,
     ) {
+        log::debug!("PoolStore::join_pool()");
         let cloned_store = store.clone();
         let signer = match joinstr::signer::WpkhHotSigner::new_from_mnemonics(network, &mnemonic) {
             Ok(s) => s,
             Err(e) => {
+                log::error!("PoolStore::join_pool() fail to create signer: {e}");
                 let _ = sender.send(e.into());
                 return;
             }
         };
         let cloned_pool = pool.clone();
+        let short_id = short_string(pool.clone().id);
         let handle = thread::spawn(move || {
             let pool_id = pool.id.clone();
             let mut j = match peer(pool.clone(), relay, coin, electrum, network, address) {
                 Ok(j) => j,
                 Err(e) => {
+                    log::error!("PoolStore::join_pool() fail to create peer: {e:?}");
                     let _ = sender.send(e.into());
                     return;
                 }
             };
+            log::info!("PoolStore::join_pool() start coinjoin...");
             j.start_coinjoin(Some(pool.clone()), Some(signer));
             let pool_entry = PoolEntry {
                 status: PoolStatus::Available,
@@ -272,6 +277,9 @@ impl PoolStore {
                     Some(s) => s == step,
                 };
                 if update_step {
+                    if last_step != Some(step) {
+                        log::info!("PoolStore::join_pool() step for pool {short_id} changed: {last_step:?} => {step:?} ");
+                    }
                     last_step = Some(step);
                     store
                         .lock()
