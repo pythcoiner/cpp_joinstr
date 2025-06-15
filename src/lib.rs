@@ -14,7 +14,7 @@ pub mod signing_manager;
 pub mod test_utils;
 pub mod tx_store;
 
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 use account::{new_account, Account, Poll, Signal};
 use address_store::AddressEntry;
@@ -274,7 +274,13 @@ pub mod cpp_joinstr {
     }
 
     extern "Rust" {
-        fn init_rust_logger(level: LogLevel);
+        type Logger;
+        fn module(&mut self, module: String, level: LogLevel);
+        fn init(&mut self);
+    }
+
+    extern "Rust" {
+        fn new_logger(level: LogLevel) -> Box<Logger>;
     }
 
     extern "Rust" {
@@ -367,10 +373,36 @@ impl From<log::LevelFilter> for LogLevel {
     }
 }
 
-pub fn init_rust_logger(level: LogLevel) {
-    let level = level.into();
-    env_logger::builder().filter_level(level).init();
-    log::info!("init_rust_logger()");
+#[derive(Debug)]
+pub struct Logger {
+    level: LogLevel,
+    levels: HashMap<String, LogLevel>,
+}
+
+impl Logger {
+    pub fn new(level: LogLevel) -> Self {
+        Self {
+            level,
+            levels: Default::default(),
+        }
+    }
+
+    pub fn module(&mut self, module: String, level: LogLevel) {
+        self.levels.insert(module, level);
+    }
+
+    pub fn init(&mut self) {
+        let mut logger = env_logger::builder();
+        logger.filter_level(self.level.into());
+        for (module, lvl) in self.levels.clone() {
+            logger.filter_module(&module, lvl.into());
+        }
+        logger.init();
+    }
+}
+
+pub fn new_logger(level: LogLevel) -> Box<Logger> {
+    Box::new(Logger::new(level))
 }
 
 impl From<AddrAccount> for u32 {
