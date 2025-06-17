@@ -54,6 +54,7 @@ impl PoolStore {
                 role: PoolRole::None,
                 step: None,
                 handle: None,
+                current_peers: 0,
             });
         updated
     }
@@ -168,6 +169,7 @@ impl PoolStore {
                 role: PoolRole::Initiator,
                 step: None,
                 handle: None,
+                current_peers: 0,
             };
 
             store
@@ -178,24 +180,33 @@ impl PoolStore {
             let _ = id_sender.send(Some(pool_id.clone()));
 
             let mut last_step: Option<Step> = None;
+            let mut last_outputs = 0;
+            let mut last_inputs = 0;
 
             loop {
                 thread::sleep(Duration::from_millis(300));
-                let step = j.state().expect("must have a state").step;
-                let update_step = match last_step {
+                let state = j.state().expect("must have a state");
+                let step = state.step;
+                let inputs = state.inputs.len();
+                let outputs = state.outputs.iter().len();
+
+                let update = match last_step {
                     None => true,
                     Some(s) => s != step,
                 };
-                if update_step {
+                let update = update || last_inputs != inputs || last_outputs != outputs;
+                if update {
                     log::info!("PoolStore::create_pool() step for pool {short_id} changed: {last_step:?} => {step:?} ");
                     last_step = Some(step);
+                    last_outputs = outputs;
+                    last_inputs = inputs;
                     store
                         .lock()
                         .expect("poisoned")
                         .store
                         .get_mut(&pool_id)
                         .expect("present")
-                        .update_step(step);
+                        .update_status(step, inputs, outputs);
                     let _ = sender.send(JoinstrNotif::PoolUpdate.into());
                 }
                 if matches!(step, Step::Mined) {
@@ -262,6 +273,7 @@ impl PoolStore {
                 role: PoolRole::Peer,
                 step: None,
                 handle: None,
+                current_peers: 0,
             };
 
             store
@@ -271,24 +283,33 @@ impl PoolStore {
                 .insert(pool_id.clone(), pool_entry);
 
             let mut last_step: Option<Step> = None;
+            let mut last_outputs = 0;
+            let mut last_inputs = 0;
 
             loop {
                 thread::sleep(Duration::from_millis(300));
-                let step = j.state().expect("must have a state").step;
-                let update_step = match last_step {
+                let state = j.state().expect("must have a state");
+                let step = state.step;
+                let inputs = state.inputs.len();
+                let outputs = state.outputs.iter().len();
+
+                let update = match last_step {
                     None => true,
                     Some(s) => s != step,
                 };
-                if update_step {
+                let update = update || last_inputs != inputs || last_outputs != outputs;
+                if update {
                     log::info!("PoolStore::join_pool() step for pool {short_id} changed: {last_step:?} => {step:?} ");
                     last_step = Some(step);
+                    last_inputs = inputs;
+                    last_outputs = outputs;
                     store
                         .lock()
                         .expect("poisoned")
                         .store
                         .get_mut(&pool_id)
                         .expect("present")
-                        .update_step(step);
+                        .update_status(step, inputs, outputs);
                     let _ = sender.send(JoinstrNotif::PoolUpdate.into());
                 }
                 if matches!(step, Step::Mined) {
@@ -354,6 +375,7 @@ pub struct PoolEntry {
     pool: nostr::Pool,
     role: PoolRole,
     step: Option<Step>,
+    current_peers: usize,
     #[serde(skip)]
     handle: Option<Arc<Mutex<JoinHandle<()>>>>,
 }
@@ -372,7 +394,7 @@ impl PoolEntry {
         self.pool.clone()
     }
     /// Update the PoolEntry given the
-    pub fn update_step(&mut self, step: Step) {
+    pub fn update_status(&mut self, step: Step, inputs: usize, outputs: usize) {
         self.step = Some(step);
         let status = match step {
             Step::Posting => Some(PoolStatus::Posting),
@@ -387,6 +409,15 @@ impl PoolEntry {
         if let Some(status) = status {
             self.status = status;
         }
+        match step {
+            Step::OutputRegistration => {
+                self.current_peers = outputs;
+            }
+            Step::InputRegistration => {
+                self.current_peers = inputs;
+            }
+            _ => {}
+        }
     }
 }
 
@@ -397,7 +428,7 @@ impl From<PoolEntry> for RustPool {
         RustPool {
             denomination: payload.denomination.to_sat(),
             total_peers: payload.peers,
-            current_peers: 0,
+            current_peers: value.current_peers,
             relay: payload
                 .relays
                 .first()
