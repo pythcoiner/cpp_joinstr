@@ -192,6 +192,7 @@ impl PoolStore {
                         .get_mut(&pool_id)
                         .expect("present")
                         .step = Some(step);
+                    let _ = sender.send(JoinstrNotif::PoolUpdate.into());
                 }
                 if matches!(step, Step::Mined) {
                     break;
@@ -284,6 +285,7 @@ impl PoolStore {
                         .get_mut(&pool_id)
                         .expect("present")
                         .step = Some(step);
+                    let _ = sender.send(JoinstrNotif::PoolUpdate.into());
                 }
                 if matches!(step, Step::Mined) {
                     break;
