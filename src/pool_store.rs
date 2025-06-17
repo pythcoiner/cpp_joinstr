@@ -92,8 +92,7 @@ impl PoolStore {
                 | PoolStatus::RegisterOutputs
                 | PoolStatus::RegisterInputs
                 | PoolStatus::Broadcast => Some(entry.into()),
-                PoolStatus::Closed => None,
-                _ => unreachable!(),
+                _ => None,
             })
             .collect()
     }
