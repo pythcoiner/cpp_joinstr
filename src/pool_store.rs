@@ -86,7 +86,12 @@ impl PoolStore {
             .clone()
             .into_iter()
             .filter_map(|(_, entry)| match entry.status {
-                PoolStatus::Available | PoolStatus::Processing => Some(entry.into()),
+                PoolStatus::Available
+                | PoolStatus::Posting
+                | PoolStatus::Connecting
+                | PoolStatus::RegisterOutputs
+                | PoolStatus::RegisterInputs
+                | PoolStatus::Broadcast => Some(entry.into()),
                 PoolStatus::Closed => None,
                 _ => unreachable!(),
             })
@@ -191,7 +196,7 @@ impl PoolStore {
                         .store
                         .get_mut(&pool_id)
                         .expect("present")
-                        .step = Some(step);
+                        .update_step(step);
                     let _ = sender.send(JoinstrNotif::PoolUpdate.into());
                 }
                 if matches!(step, Step::Mined) {
@@ -255,7 +260,7 @@ impl PoolStore {
             let pool_entry = PoolEntry {
                 status: PoolStatus::Available,
                 pool,
-                role: PoolRole::Initiator,
+                role: PoolRole::Peer,
                 step: None,
                 handle: None,
             };
@@ -284,7 +289,7 @@ impl PoolStore {
                         .store
                         .get_mut(&pool_id)
                         .expect("present")
-                        .step = Some(step);
+                        .update_step(step);
                     let _ = sender.send(JoinstrNotif::PoolUpdate.into());
                 }
                 if matches!(step, Step::Mined) {
@@ -366,6 +371,23 @@ impl PoolEntry {
     /// Returns the a clone of the pool
     pub fn pool(&self) -> nostr::Pool {
         self.pool.clone()
+    }
+    /// Update the PoolEntry given the
+    pub fn update_step(&mut self, step: Step) {
+        self.step = Some(step);
+        let status = match step {
+            Step::Posting => Some(PoolStatus::Posting),
+            Step::Connecting => Some(PoolStatus::Connecting),
+            Step::OutputRegistration => Some(PoolStatus::RegisterOutputs),
+            Step::InputRegistration => Some(PoolStatus::RegisterInputs),
+            Step::Broadcast => Some(PoolStatus::Broadcast),
+            Step::Mined => Some(PoolStatus::Mined),
+            Step::Failed => Some(PoolStatus::Closed),
+            _ => None,
+        };
+        if let Some(status) = status {
+            self.status = status;
+        }
     }
 }
 

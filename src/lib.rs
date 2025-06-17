@@ -87,9 +87,13 @@ pub mod cpp_joinstr {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     pub enum PoolStatus {
+        Posting,
+        Connecting,
         Available,
-        Processing,
-        Joined,
+        RegisterOutputs,
+        RegisterInputs,
+        Broadcast,
+        Mined,
         Closed,
         Error,
     }
