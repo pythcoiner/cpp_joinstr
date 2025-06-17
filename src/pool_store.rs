@@ -176,16 +176,14 @@ impl PoolStore {
             let mut last_step: Option<Step> = None;
 
             loop {
-                thread::sleep(Duration::from_millis(1000));
+                thread::sleep(Duration::from_millis(300));
                 let step = j.state().expect("must have a state").step;
                 let update_step = match last_step {
                     None => true,
-                    Some(s) => s == step,
+                    Some(s) => s != step,
                 };
                 if update_step {
-                    if last_step != Some(step) {
-                        log::info!("PoolStore::create_pool() step for pool {short_id} changed: {last_step:?} => {step:?} ");
-                    }
+                    log::info!("PoolStore::create_pool() step for pool {short_id} changed: {last_step:?} => {step:?} ");
                     last_step = Some(step);
                     store
                         .lock()
@@ -270,16 +268,14 @@ impl PoolStore {
             let mut last_step: Option<Step> = None;
 
             loop {
-                thread::sleep(Duration::from_millis(1000));
+                thread::sleep(Duration::from_millis(300));
                 let step = j.state().expect("must have a state").step;
                 let update_step = match last_step {
                     None => true,
-                    Some(s) => s == step,
+                    Some(s) => s != step,
                 };
                 if update_step {
-                    if last_step != Some(step) {
-                        log::info!("PoolStore::join_pool() step for pool {short_id} changed: {last_step:?} => {step:?} ");
-                    }
+                    log::info!("PoolStore::join_pool() step for pool {short_id} changed: {last_step:?} => {step:?} ");
                     last_step = Some(step);
                     store
                         .lock()
