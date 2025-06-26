@@ -290,6 +290,10 @@ pub mod cpp_joinstr {
     extern "Rust" {
         fn list_configs() -> Vec<String>;
     }
+
+    extern "Rust" {
+        pub fn estimate_weight(peer: usize) -> usize;
+    }
 }
 
 use cpp_joinstr::{AddrAccount, LogLevel, Network, PoolRole, PoolStatus, RustPool, SignalFlag};
@@ -504,6 +508,10 @@ impl Display for PoolRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }
+}
+
+pub fn estimate_weight(peer: usize) -> usize {
+    (400 * peer) + 50
 }
 
 pub fn pool_role_to_string(status: PoolRole) -> String {
