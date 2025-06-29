@@ -823,6 +823,12 @@ impl Account {
             return Err("Minimum allowed fee rate is 1 sat/vb!".to_string());
         }
 
+        if tx_template.outputs.is_empty() {
+            return Err("No outputs!".to_string());
+        } else if tx_template.inputs.is_empty() {
+            return Err("No inputs!".to_string());
+        }
+
         let mut inputs_total = 0;
         let mut outputs_total = 0;
 
