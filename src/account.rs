@@ -609,6 +609,8 @@ impl Account {
             .explicit_script()
             .map(|s| varint_len(s.len()) + s.len());
 
+        log::info!("{assets:?}");
+
         // Finally, compute the satisfaction template for the primary path and get its size.
         let plan = der_desc.plan(&assets).expect("Always satisfiable");
         let size = plan.witness_size()
