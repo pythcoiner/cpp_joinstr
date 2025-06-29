@@ -837,7 +837,7 @@ impl Account {
         // parse outpoints
         let mut outpoints = vec![];
         for inp in &tx_template.inputs {
-            let parsed: Result<bitcoin::OutPoint, _> = serde_json::from_str(&inp.outpoint);
+            let parsed = OutPoint::from_str(&inp.outpoint);
             match parsed {
                 Ok(op) => outpoints.push(op),
                 Err(_) => return Err("Fail to parse Outpoint".to_string()),
