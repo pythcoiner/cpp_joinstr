@@ -598,7 +598,13 @@ impl Account {
         // manually add the size of the witscript under P2WSH by means of the
         // `explicit_script()` helper, which gives an error for Taproot, and for Taproot
         // we add the sizes of the control block and script.
-        let der_desc = descr.at_derivation_index(0).expect("unhardened index");
+        let der_desc = descr
+            .into_single_descriptors()
+            .expect("multikey")
+            .first()
+            .expect("have 2")
+            .at_derivation_index(0)
+            .expect("unhardened index");
         let witscript_size = der_desc
             .explicit_script()
             .map(|s| varint_len(s.len()) + s.len());
