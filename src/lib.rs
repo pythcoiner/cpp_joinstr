@@ -30,7 +30,15 @@ pub mod cpp_joinstr {
     pub struct TransactionTemplate {
         inputs: Vec<RustCoin>,
         outputs: Vec<Output>,
-        fee: u64, // fee in sats (NOT sats/vb)
+        fee_sats: u64,
+        fee_sats_vb: f64,
+    }
+
+    pub struct TransactionSimulation {
+        spendable: bool,
+        has_change: bool,
+        estimated_weight: u64,
+        error: String,
     }
 
     pub struct Output {
@@ -250,6 +258,7 @@ pub mod cpp_joinstr {
         fn edit_coin_label(&self, outpoint: String, label: String);
         fn recv_addr_at(&self, index: u32) -> String;
         fn change_addr_at(&self, index: u32) -> String;
+        fn simulate_transaction(&self, tx_template: TransactionTemplate) -> TransactionSimulation;
         fn prepare_transaction(&mut self, tx_template: TransactionTemplate) -> Box<PsbtResult>;
         fn pools(&self) -> Box<PoolsResult>;
         fn create_pool(

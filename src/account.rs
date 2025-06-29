@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -12,8 +12,12 @@ use std::{
 use joinstr::{
     electrum::{CoinRequest, CoinResponse},
     miniscript::{
-        bitcoin::{self, absolute, Amount, EcdsaSighashType, OutPoint, ScriptBuf},
+        self,
+        bitcoin::{self, absolute, Amount, EcdsaSighashType, OutPoint, ScriptBuf, TxOut},
+        miniscript::satisfy::Placeholder,
+        plan::CanSign,
         psbt::PsbtExt,
+        ForEachKey,
     },
     nostr::{self, error, sync::NostrClient, Pool},
     simple_nostr_client::nostr::key::Keys,
@@ -26,7 +30,7 @@ use crate::{
     config::Tip,
     cpp_joinstr::{
         AddrAccount, AddressStatus, CoinState, PoolStatus, RustAddress, RustPool, SignalFlag,
-        TransactionTemplate,
+        TransactionSimulation, TransactionTemplate,
     },
     derivator::Derivator,
     label_store::{LabelKey, LabelStore},
@@ -35,6 +39,11 @@ use crate::{
     tx_store::TxStore,
     Config, PoolsResult, PsbtResult,
 };
+
+/// The factor that non-witness serialization data is multiplied by during weight calculation.
+const WITNESS_SCALE_FACTOR: u64 = 4;
+
+const DUST_AMOUNT: u64 = 5_000;
 
 result!(Poll, Signal);
 
@@ -239,6 +248,7 @@ pub enum Error {
     RelayMissing,
     WrongElectrumConfig,
     PoolMissing,
+    WrongKeyType,
 }
 
 impl From<nostr::error::Error> for Error {
@@ -526,6 +536,155 @@ impl Account {
         self.coin_store.lock().expect("poisoned").spendable_coins()
     }
 
+    /// Calculates the satisfaction size for an input, returning the result
+    /// in weight units (WU).
+    ///
+    /// This function estimates the size required to satisfy the inputs of a
+    /// transaction based on the
+    /// account's descriptor.
+    ///
+    /// # Returns
+    ///
+    /// A `Result<usize, Error>` where:
+    /// - `Ok(usize)` indicates the estimated satisfaction size in weight units (WU).
+    /// - `Err(Error)` indicates an error occurred during the calculation.
+    ///
+    /// # Errors
+    ///
+    /// This function can return an error in the following cases:
+    /// - If the descriptor is invalid or cannot be parsed, leading to an
+    ///   inability to determine the satisfaction size for the inputs.
+    ///
+    /// - If the input satisfaction size exceeds the maximum allowable weight,
+    ///   which may lead to an
+    ///   overflow during calculations.
+    ///
+    /// - If the transaction contains no inputs, making weight estimation impossible.
+    ///
+    /// - If there is an issue with the underlying logic of the weight calculation,
+    ///   such as unexpected behavior from the `miniscript` library.
+    ///
+    /// # Note
+    ///
+    /// Currently, only single and multisig setups are supported. The following
+    /// features are not supported:
+    /// - Timelocks
+    /// - Hashlocks
+    /// - Multipaths
+    pub fn input_satisfaction_size(&self) -> Result<usize, Error> {
+        let descr = self.config.descriptor.clone();
+        let mut keys = BTreeSet::new();
+        descr.for_each_key(|k| {
+            if let miniscript::DescriptorPublicKey::MultiXPub(dpk) = k {
+                if let Some(origin) = &dpk.origin {
+                    keys.insert((origin.clone(), CanSign::default()));
+                }
+            }
+            true
+        });
+        if keys.is_empty() {
+            return Err(Error::WrongKeyType);
+        }
+        let assets = miniscript::plan::Assets {
+            keys,
+            ..Default::default()
+        };
+
+        // NOTE: this logic have been copied from Liana wallet.
+
+        // Unfortunately rust-miniscript satisfaction size estimation is inconsistent. For
+        // Taproot it considers the whole witness (except the control block size + the
+        // script size), while under P2WSH it does not consider the witscript! Therefore we
+        // manually add the size of the witscript under P2WSH by means of the
+        // `explicit_script()` helper, which gives an error for Taproot, and for Taproot
+        // we add the sizes of the control block and script.
+        let der_desc = descr.at_derivation_index(0).expect("unhardened index");
+        let witscript_size = der_desc
+            .explicit_script()
+            .map(|s| varint_len(s.len()) + s.len());
+
+        // Finally, compute the satisfaction template for the primary path and get its size.
+        let plan = der_desc.plan(&assets).expect("Always satisfiable");
+        let size = plan.witness_size()
+            + witscript_size.unwrap_or_else(|_| {
+                plan.witness_template()
+                    .iter()
+                    .map(|elem| match elem {
+                        // We need to calculate the size manually before calculating the varint length.
+                        // See https://docs.rs/miniscript/11.0.0/src/miniscript/util.rs.html#35-36.
+                        Placeholder::TapScript(s) => varint_len(s.len()),
+                        Placeholder::TapControlBlock(cb) => varint_len(cb.serialize().len()),
+                        _ => 0,
+                    })
+                    .sum()
+            });
+        Ok(size)
+    }
+
+    /// Estimates the maximum possible weight in weight units of an unsigned
+    /// transaction, `tx`, after satisfaction, assuming all inputs of `tx` are
+    /// from this descriptor.
+    ///
+    /// # Arguments
+    ///
+    /// * `tx` - A reference to the `bitcoin::Transaction` for which the weight
+    ///   is to be estimated.
+    ///
+    /// # Returns
+    ///
+    /// A `Result<u64, Error>` containing:
+    /// - `Ok(u64)` - The estimated weight of the transaction in weight units (WU).
+    /// - `Err(Error)` - An error if the estimation fails.
+    ///
+    /// # Errors
+    ///
+    /// This function can return an error in the following cases:
+    /// - If the satisfaction size for the inputs cannot be calculated due to an
+    ///   invalid descriptor.
+    /// - If the input satisfaction size exceeds the maximum allowable weight,
+    ///   leading to an overflow.
+    /// - If the transaction contains no inputs, which would make weight estimation
+    ///   impossible.
+    /// - If there is an issue with the underlying logic of the weight calculation,
+    ///   such as unexpected behavior from the `miniscript` library.
+    ///
+    /// # Note
+    ///
+    /// The weight is calculated based on the number of inputs and their respective
+    /// satisfaction sizes.
+    /// The function takes into account the Segwit marker and flag, ensuring that
+    /// the weight is accurately
+    /// represented according to Bitcoin's transaction weight rules. This logic have
+    /// been borrowed from Liana wallet.
+    pub fn tx_estimated_weight(&self, tx: &bitcoin::Transaction) -> Result<u64, Error> {
+        let num_inputs: u64 = tx.input.len().try_into().unwrap();
+        let max_sat_weight: u64 = self.input_satisfaction_size()?.try_into().unwrap();
+        // Add weights together before converting to vbytes to avoid rounding up multiple times.
+        let size = tx
+            .weight()
+            .to_wu()
+            .checked_add(max_sat_weight.checked_mul(num_inputs).unwrap())
+            .and_then(|weight| {
+                weight.checked_add(
+                    // Make sure the Segwit marker and flag are included:
+                    // https://docs.rs/bitcoin/0.31.0/src/bitcoin/blockdata/transaction.rs.html#752-753
+                    // https://docs.rs/bitcoin/0.31.0/src/bitcoin/blockdata/transaction.rs.html#968-979
+                    if num_inputs > 0 && tx.input.iter().all(|txin| txin.witness.is_empty()) {
+                        2
+                    } else {
+                        0
+                    },
+                )
+            })
+            .unwrap();
+        let size = size
+            .checked_add(WITNESS_SCALE_FACTOR.checked_sub(1).unwrap())
+            .unwrap()
+            .checked_div(WITNESS_SCALE_FACTOR)
+            .unwrap();
+        Ok(size)
+    }
+
     /// Returns the coin matching the given outpoint if found, else None.
     pub fn get_coin(&self, outpoint: &OutPoint) -> Option<Coin> {
         self.coin_store
@@ -535,60 +694,48 @@ impl Account {
             .map(|e| e.coin)
     }
 
-    /// Prepare a PSBT ready to sign from a `TransactionTemplate`.
+    /// Generates a static dummy script public key (SPK) for change outputs.
+    ///
+    /// This function always returns the same dummy spk,
+    /// It is useful for simulating change outputs in a non-final transaction
+    /// while allowing for easy replacement of this SPK later during the final
+    /// crafting of the transaction.
     ///
     /// # Returns
     ///
-    /// A boxed PsbtResult containing the PSBT or the error string.
-    pub fn prepare_transaction(&mut self, tx_template: TransactionTemplate) -> Box<PsbtResult> {
-        // TODO: take output MAX in account
-        // TODO: add a change when needed
-        // TODO: handle fees
-        let mut outpoints = vec![];
-        for inp in tx_template.inputs {
-            let parsed: Result<bitcoin::OutPoint, _> = serde_json::from_str(&inp.outpoint);
-            match parsed {
-                Ok(op) => outpoints.push(op),
-                Err(_) => return "Fail to parse Outpoint".into(),
-            }
-        }
+    /// A `ScriptBuf` representing the dummy script public key for the change address.
+    ///
+    /// # Note
+    ///
+    /// The SPK returned by this function is not intended for actual use in
+    /// transactions until it is replaced with a valid SPK at the time of final
+    /// transaction crafting.
+    pub fn dummy_spk(&self) -> ScriptBuf {
+        ScriptBuf::from_bytes(vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+    }
 
-        let mut outputs = vec![];
-        {
-            let store = self.coin_store.lock().expect("poisoned");
-            for out in tx_template.outputs {
-                let addr = match bitcoin::Address::from_str(&out.address) {
-                    Ok(a) => a,
-                    Err(_) => return "Fail to parse address".into(),
-                };
-                if !addr.is_valid_for_network(self.config.network) {
-                    return "Provided address is not valid for the current network".into();
-                }
-                let addr = addr.assume_checked();
-                let txout = bitcoin::TxOut {
-                    value: bitcoin::Amount::from_sat(out.amount),
-                    script_pubkey: addr.script_pubkey(),
-                };
-                let deriv = store
-                    .address_info(&addr.script_pubkey())
-                    .map(|e| (e.account(), e.index()));
-                outputs.push((txout, deriv));
-            }
-        } // <- drop coin_store lock here
-
-        let inputs = {
-            let store = self.coin_store.lock().expect("poisoned");
-            let mut inputs = Vec::<CoinEntry>::new();
-            for op in outpoints {
-                match store.get(&op) {
-                    Some(coin) => inputs.push(coin),
-                    // TODO: support external inputs
-                    None => return "Provided outpoint do not match an available coin".into(),
-                }
-            }
-            inputs
-        }; // <- release coin_store lock
-
+    /// Assembles a Bitcoin transaction from the provided inputs and outputs.
+    ///
+    /// This function creates a new `bitcoin::Transaction` by populating its
+    /// input and output fields based on the provided vectors of coin entries
+    /// and transaction outputs. The transaction is initialized with a version
+    /// and a lock time of zero.
+    ///
+    /// # Arguments
+    ///
+    /// * `inputs` - A reference to a vector of `CoinEntry` representing the
+    ///   inputs for the transaction.
+    /// * `outputs` - A reference to a vector of tuples, where each tuple contains
+    ///   a `TxOut` and an optional tuple with an `AddrAccount` and an index,
+    ///   representing the outputs for the transaction.
+    ///
+    /// # Returns
+    ///
+    /// A `bitcoin::Transaction` instance that contains the assembled inputs and outputs.
+    fn assembly_tx(
+        inputs: &Vec<CoinEntry>,
+        outputs: &Vec<(TxOut, Option<(AddrAccount, u32)>)>,
+    ) -> bitcoin::Transaction {
         let mut tx = bitcoin::Transaction {
             version: bitcoin::transaction::Version(2),
             lock_time: absolute::LockTime::ZERO,
@@ -596,13 +743,424 @@ impl Account {
             output: vec![],
         };
 
-        for i in &inputs {
+        for i in inputs {
             tx.input.push(i.txin());
         }
 
-        for o in &outputs {
+        for o in outputs {
             tx.output.push(o.0.clone());
         }
+
+        tx
+    }
+
+    /// Preprocesses a transaction based on the provided `TransactionTemplate`.
+    ///
+    /// This function processes the transaction template to estimate whether the
+    /// transaction can be successfully executed, including whether it is spendable
+    /// and if it requires change.
+    ///
+    /// # Arguments
+    ///
+    /// * `tx_template` - A `TransactionTemplate` containing the details of the
+    ///   transaction to be processed.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// - A tuple with three elements:
+    ///   - A `Vec<CoinEntry>` representing the inputs for the transaction.
+    ///   - A `Vec<(TxOut, Option<(AddrAccount, u32)>)>` representing the outputs
+    ///     for the transaction.
+    ///   - A boolean indicating if the transaction contains a change output.
+    ///
+    /// # Errors
+    ///
+    /// This function can return an error in the following cases:
+    /// - If both `fee_sats` and `fee_sats_vb` are filled, which is not allowed.
+    /// - If neither `fee_sats` nor `fee_sats_vb` is filled, which is required.
+    /// - If `fee_sats_vb` is filled with a value less than 1.0, which is below
+    ///   the minimum allowed fee rate.
+    /// - If the provided outpoints do not match any available coins in the coin
+    ///   store. (external inputs are not allowed for now)
+    /// - If the total inputs amount is less than the total outputs amount, making
+    ///   the transaction invalid.
+    /// - If the maximum output is selected but there are not enough reserves to fill it.
+    /// - If the estimated fees exceed the available reserves.
+    /// - If there is an issue while handling the transaction history or if the
+    ///   transaction cannot be created for any other reason.
+    ///
+    /// # Note
+    ///
+    /// This function is intended for use in scenarios where users need to gather
+    /// information about the transaction before finalizing it, allowing for
+    /// adjustments based on the simulation results.
+    #[allow(clippy::type_complexity)]
+    pub fn process_transaction(
+        &self,
+        tx_template: &TransactionTemplate,
+    ) -> Result<
+        (
+            Vec<CoinEntry>,                           /* inputs */
+            Vec<(TxOut, Option<(AddrAccount, u32)>)>, /* outputs */
+            bool,                                     /* change */
+        ),
+        String,
+    > {
+        // TODO: implement coin selection if no or not enough input provided
+
+        if (tx_template.fee_sats > 0) && (tx_template.fee_sats_vb > 0.0) {
+            return Err("Only one of fee_sats or fee_sats_vb must be filled!".to_string());
+        } else if (tx_template.fee_sats == 0) && (tx_template.fee_sats_vb == 0.0) {
+            return Err("One of fee_sats or fee_sats_vb must be filled!".to_string());
+        } else if (tx_template.fee_sats == 0) && (tx_template.fee_sats_vb < 1.0) {
+            return Err("Minimum allowed fee rate is 1 sat/vb!".to_string());
+        }
+
+        let mut inputs_total = 0;
+        let mut outputs_total = 0;
+
+        // count maxed outputs
+        let mut maxed_outputs = 0;
+        let mut maxed_output = None;
+
+        for o in &tx_template.outputs {
+            if o.max {
+                if maxed_outputs > 0 {
+                    return Err("A single output can have the MAX field selected".to_string());
+                } else {
+                    maxed_outputs += 1;
+                }
+            }
+        }
+
+        // parse outpoints
+        let mut outpoints = vec![];
+        for inp in &tx_template.inputs {
+            let parsed: Result<bitcoin::OutPoint, _> = serde_json::from_str(&inp.outpoint);
+            match parsed {
+                Ok(op) => outpoints.push(op),
+                Err(_) => return Err("Fail to parse Outpoint".to_string()),
+            }
+        }
+
+        // craft outputs
+        let mut outputs = vec![];
+        {
+            for out in &tx_template.outputs {
+                if !out.max {
+                    outputs_total += out.amount;
+                }
+
+                // parse address & sanitize address
+                let addr = match bitcoin::Address::from_str(&out.address) {
+                    Ok(a) => a,
+                    Err(_) => return Err("Fail to parse address".to_string()),
+                };
+                if !addr.is_valid_for_network(self.config.network) {
+                    return Err("Provided address is not valid for the current network".to_string());
+                }
+                let addr = addr.assume_checked();
+                let amount = if out.max {
+                    bitcoin::Amount::ZERO
+                } else {
+                    bitcoin::Amount::from_sat(out.amount)
+                };
+                let txout = bitcoin::TxOut {
+                    value: amount,
+                    script_pubkey: addr.script_pubkey(),
+                };
+                if out.max {
+                    maxed_output = Some(addr.script_pubkey());
+                }
+
+                outputs.push((txout, None));
+            }
+        }
+
+        // get informations about coins to spend
+        let inputs = {
+            let store = self.coin_store.lock().expect("poisoned");
+            let mut inputs = Vec::<CoinEntry>::new();
+            for op in outpoints {
+                match store.get(&op) {
+                    Some(coin) => {
+                        inputs_total += coin.amount_sat();
+                        inputs.push(coin);
+                    }
+                    // TODO: maybe support external inputs?
+                    None => {
+                        return Err("Provided outpoint do not match an available coin".to_string())
+                    }
+                }
+            }
+            inputs
+        }; // <- release coin_store lock
+
+        let fee_reserve = inputs_total - outputs_total;
+
+        if maxed_output.is_some() && fee_reserve < DUST_AMOUNT {
+            return Err("Not enough reserve to fill maxed output!".to_string());
+        }
+
+        if tx_template.fee_sats > fee_reserve {
+            return Err("Not enough reserve to pay fees!".to_string());
+        }
+
+        // estimate the fee value if change is not needed
+        let tx_without_change = Self::assembly_tx(&inputs, &outputs);
+        let estimated_weight_without_change = match self.tx_estimated_weight(&tx_without_change) {
+            Ok(w) => w,
+            Err(e) => return Err(format!("Failed to estimate tx weight: {e:?}")),
+        };
+        let fees_without_change = if tx_template.fee_sats_vb > 0.0 {
+            let estimated_fees_without_change =
+                (tx_template.fee_sats_vb * estimated_weight_without_change as f64).ceil() as u64;
+            if estimated_fees_without_change > fee_reserve {
+                return Err("Not enough reserve to pay fees!".to_string());
+            }
+            estimated_fees_without_change
+        } else {
+            tx_template.fee_sats
+        };
+
+        let mut change = maxed_output.is_none() && (fee_reserve > DUST_AMOUNT);
+
+        let fees = if change {
+            // if a change output is expected we add a dummy output
+            let dummy_spk = self.dummy_spk();
+            let txout = bitcoin::TxOut {
+                // NOTE: putting a dummy 0 amount, will be adjusted
+                // after processing fees
+                value: bitcoin::Amount::from_sat(0),
+                // NOTE: we use here the dummy spk in order to make it easy to
+                // find which output we need to substract fees from in a later step.
+                script_pubkey: dummy_spk,
+            };
+            outputs.push((txout, None));
+
+            // process tx weight w/ the added change
+            let tx_with_change = Self::assembly_tx(&inputs, &outputs);
+            let estimated_weight_with_change = match self.tx_estimated_weight(&tx_with_change) {
+                Ok(w) => w,
+                Err(e) => return Err(format!("Failed to estimate tx weight: {e:?}")),
+            };
+
+            let mut fees = if tx_template.fee_sats_vb > 0.0 {
+                // fee rate is given, we estimate the fee value
+                let estimated_fees_with_change =
+                    (tx_template.fee_sats_vb * estimated_weight_with_change as f64).ceil() as u64;
+
+                if estimated_fees_with_change > fee_reserve {
+                    // if the reserve not contain enough for pay fees, we drop the change output
+                    outputs.pop();
+                    change = false;
+                    fees_without_change
+                } else {
+                    estimated_fees_with_change
+                }
+            } else {
+                // fee amount have been selected
+                let min_fee = estimated_weight_with_change;
+                if fee_reserve < min_fee {
+                    outputs.pop();
+                    change = false;
+                }
+                tx_template.fee_sats
+            };
+
+            if change {
+                // if the resulting change amount < DUST amount
+                // we drop the change output
+                let change_amount = fee_reserve - fees;
+                if change_amount < DUST_AMOUNT {
+                    outputs.pop();
+                    change = false;
+                    fees = fee_reserve;
+                }
+            }
+
+            fees
+        } else {
+            fees_without_change
+        };
+
+        if fees > fee_reserve {
+            return Err("Not enough reserve to pay fees!".to_string());
+        }
+
+        // fill amount for maxed or change output
+        let change_or_max = bitcoin::Amount::from_sat(fee_reserve - fees);
+        if change {
+            outputs.last_mut().expect("as a last output").0.value = change_or_max;
+        } else {
+            if change_or_max.to_sat() < DUST_AMOUNT {
+                return Err("Maxed output amount is lower than the dust limit".to_string());
+            }
+            let dummy_spk = self.dummy_spk();
+            for (txout, _) in &mut outputs {
+                if txout.script_pubkey == dummy_spk {
+                    txout.value = change_or_max;
+                }
+            }
+        }
+
+        // populate addresses indexes
+        {
+            let store = self.coin_store.lock().expect("poisoned");
+            for out in &mut outputs {
+                let spk = &out.0.script_pubkey;
+                // get derivation index of this address
+                // NOTE: this is needed by the signer to know it's a change/send-to-self
+                out.1 = store.address_info(spk).map(|e| (e.account(), e.index()));
+            }
+        } // <- release coin_store lock here
+
+        Ok((inputs, outputs, change))
+    }
+
+    pub fn change_index(&self, tx: &bitcoin::Transaction) -> Option<usize> {
+        let dummy_spk = self.dummy_spk();
+        for (index, TxOut { script_pubkey, .. }) in tx.output.iter().enumerate() {
+            if *script_pubkey == dummy_spk {
+                return Some(index);
+            }
+        }
+        None
+    }
+
+    /// Simulates a transaction based on the provided `TransactionTemplate`
+    ///
+    /// This function processes the transaction template to estimate whether the
+    /// transaction can be successfully executed, including whether it is spendable
+    /// and if it requires change. It also calculates the estimated weight of the
+    /// transaction in weight units (WU).
+    ///
+    /// # Arguments
+    ///
+    /// * `tx_template` - A `TransactionTemplate` containing the details of the
+    ///   transaction to be simulated.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing:
+    /// - A tuple with three elements:
+    ///   - A boolean indicating if the transaction is spendable.
+    ///   - A boolean indicating if the transaction has change.
+    ///   - An estimated weight of the transaction in weight units (WU).
+    ///
+    /// # Errors
+    ///
+    /// This function can return an error in the following cases:
+    /// - If the transaction processing fails due to invalid outpoints in
+    ///   `tx_template.inputs`.
+    /// - If the provided outpoints do not match any available coins in the coin store
+    /// - If the addresses in `tx_template.outputs` cannot be parsed into valid
+    ///   `bitcoin::Address` instances.
+    /// - If the parsed addresses are not valid for the current network.
+    /// - If the total inputs amount is less than the total outputs amount, making
+    ///   the transaction invalid.
+    /// - If there is an issue while handling the transaction history or if the
+    ///   transaction cannot be created for any other reason.
+    ///
+    /// # Note
+    ///
+    /// This function is intended for use in scenarios where users need to gather
+    /// information about the transaction before finalizing it, allowing for
+    /// adjustments based on the simulation results.
+    pub fn simulate_transaction(&self, tx_template: TransactionTemplate) -> TransactionSimulation {
+        let (inputs, outputs, has_change) = match self.process_transaction(&tx_template) {
+            Ok(r) => r,
+            Err(e) => {
+                return TransactionSimulation {
+                    spendable: false,
+                    has_change: false,
+                    estimated_weight: 0,
+                    error: e,
+                }
+            }
+        };
+        let tx = Self::assembly_tx(&inputs, &outputs);
+        let estimated_weight = match self.tx_estimated_weight(&tx) {
+            Ok(ew) => ew,
+            Err(e) => {
+                return TransactionSimulation {
+                    spendable: false,
+                    has_change: false,
+                    estimated_weight: 0,
+                    error: format!("{e:?}"),
+                }
+            }
+        };
+        TransactionSimulation {
+            spendable: true,
+            has_change,
+            estimated_weight,
+            error: String::new(),
+        }
+    }
+
+    /// Prepares a PSBT from a given `TransactionTemplate`.
+    ///
+    /// This function processes the provided transaction template to create a
+    /// PSBT that is ready for signing.
+    /// It gathers the necessary inputs and outputs based on the transaction
+    /// template and populates the PSBT
+    /// with the appropriate descriptors for each input and output.
+    ///
+    /// # Arguments
+    ///
+    /// * `tx_template` - A `TransactionTemplate` containing the details of
+    ///   the transaction to be processed.
+    ///   This includes inputs, outputs, and fee information.
+    ///
+    /// # Returns
+    ///
+    /// A `Box<PsbtResult>` containing the following:
+    /// - `Ok(psbt)` - A successfully created PSBT as a string.
+    /// - `Err(String)` - An error message if the PSBT could not be created.
+    ///
+    /// # Errors
+    ///
+    /// This function can return an error in the following cases:
+    /// - If the provided `TransactionTemplate` is invalid or does not contain
+    ///   the necessary information.
+    /// - If the inputs specified in the transaction template do not match any
+    ///   available coins in the coin store.
+    /// - If the outputs specified in the transaction template cannot be parsed
+    ///   into valid Bitcoin addresses.
+    /// - If the total input amount is less than the total output amount, making
+    ///   the transaction invalid.
+    /// - If the fee specified is greater than the available reserves, preventing
+    ///   the transaction from being processed.
+    /// - If there is an issue while creating the PSBT from the unsigned transaction,
+    ///   such as invalid input data.
+    /// - If the function encounters any unexpected errors during processing.
+    ///
+    /// # Note
+    ///
+    /// This function is intended for use in scenarios where users need to prepare
+    /// a transaction for signing, allowing for adjustments based on the provided
+    /// transaction template before finalizing the transaction.
+    pub fn prepare_transaction(&mut self, tx_template: TransactionTemplate) -> Box<PsbtResult> {
+        let (inputs, mut outputs, change) = match self.process_transaction(&tx_template) {
+            Ok(r) => r,
+            Err(e) => {
+                return e.as_str().into();
+            }
+        };
+
+        // if there is a change, we replace the dummy spk by a freshly generated spk
+        if change {
+            let dummy_spk = self.dummy_spk();
+            for (txout, _) in &mut outputs {
+                if txout.script_pubkey == dummy_spk {
+                    txout.script_pubkey = self.new_change_addr().script_pubkey();
+                }
+            }
+        }
+
+        let tx = Self::assembly_tx(&inputs, &outputs);
 
         let mut psbt = match bitcoin::Psbt::from_unsigned_tx(tx) {
             Ok(psbt) => psbt,
@@ -1397,6 +1955,10 @@ fn pool_listener<N: From<JoinstrNotif> + Send + 'static>(
             }
         } // release store lock
     }
+}
+
+fn varint_len(n: usize) -> usize {
+    bitcoin::VarInt(n as u64).size()
 }
 
 #[cfg(test)]
