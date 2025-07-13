@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -12,12 +12,8 @@ use std::{
 use joinstr::{
     electrum::{CoinRequest, CoinResponse},
     miniscript::{
-        self,
         bitcoin::{self, absolute, Amount, EcdsaSighashType, OutPoint, ScriptBuf, TxOut},
-        miniscript::satisfy::Placeholder,
-        plan::CanSign,
         psbt::PsbtExt,
-        ForEachKey,
     },
     nostr::{self, error, sync::NostrClient, Pool},
     simple_nostr_client::nostr::key::Keys,
@@ -249,6 +245,7 @@ pub enum Error {
     WrongElectrumConfig,
     PoolMissing,
     WrongKeyType,
+    Satisfaction,
 }
 
 impl From<nostr::error::Error> for Error {
@@ -554,77 +551,18 @@ impl Account {
     /// This function can return an error in the following cases:
     /// - If the descriptor is invalid or cannot be parsed, leading to an
     ///   inability to determine the satisfaction size for the inputs.
-    ///
-    /// - If the input satisfaction size exceeds the maximum allowable weight,
-    ///   which may lead to an
-    ///   overflow during calculations.
-    ///
-    /// - If the transaction contains no inputs, making weight estimation impossible.
-    ///
-    /// - If there is an issue with the underlying logic of the weight calculation,
-    ///   such as unexpected behavior from the `miniscript` library.
-    ///
-    /// # Note
-    ///
-    /// Currently, only single and multisig setups are supported. The following
-    /// features are not supported:
-    /// - Timelocks
-    /// - Hashlocks
-    /// - Multipaths
     pub fn input_satisfaction_size(&self) -> Result<usize, Error> {
-        let descr = self.config.descriptor.clone();
-        let mut keys = BTreeSet::new();
-        descr.for_each_key(|k| {
-            if let miniscript::DescriptorPublicKey::MultiXPub(dpk) = k {
-                if let Some(origin) = &dpk.origin {
-                    keys.insert((origin.clone(), CanSign::default()));
-                }
-            }
-            true
-        });
-        if keys.is_empty() {
-            return Err(Error::WrongKeyType);
-        }
-        let assets = miniscript::plan::Assets {
-            keys,
-            ..Default::default()
-        };
-
-        // NOTE: this logic have been copied from Liana wallet.
-
-        // Unfortunately rust-miniscript satisfaction size estimation is inconsistent. For
-        // Taproot it considers the whole witness (except the control block size + the
-        // script size), while under P2WSH it does not consider the witscript! Therefore we
-        // manually add the size of the witscript under P2WSH by means of the
-        // `explicit_script()` helper, which gives an error for Taproot, and for Taproot
-        // we add the sizes of the control block and script.
-        let der_desc = descr
+        self.config
+            .descriptor
+            .clone()
             .into_single_descriptors()
             .expect("multikey")
             .first()
-            .expect("have 2")
-            .at_derivation_index(0)
-            .expect("unhardened index");
-        let witscript_size = der_desc
-            .explicit_script()
-            .map(|s| varint_len(s.len()) + s.len());
-
-        // Finally, compute the satisfaction template for the primary path and get its size.
-        let plan = der_desc.plan(&assets).expect("Always satisfiable");
-        let size = plan.witness_size()
-            + witscript_size.unwrap_or_else(|_| {
-                plan.witness_template()
-                    .iter()
-                    .map(|elem| match elem {
-                        // We need to calculate the size manually before calculating the varint length.
-                        // See https://docs.rs/miniscript/11.0.0/src/miniscript/util.rs.html#35-36.
-                        Placeholder::TapScript(s) => varint_len(s.len()),
-                        Placeholder::TapControlBlock(cb) => varint_len(cb.serialize().len()),
-                        _ => 0,
-                    })
-                    .sum()
-            });
-        Ok(size)
+            .expect("multikey")
+            .clone()
+            .max_weight_to_satisfy()
+            .map_err(|_| Error::Satisfaction)
+            .map(|w| w.to_wu() as usize)
     }
 
     /// Estimates the maximum possible weight in weight units of an unsigned
@@ -1967,10 +1905,6 @@ fn pool_listener<N: From<JoinstrNotif> + Send + 'static>(
             }
         } // release store lock
     }
-}
-
-fn varint_len(n: usize) -> usize {
-    bitcoin::VarInt(n as u64).size()
 }
 
 #[cfg(test)]
