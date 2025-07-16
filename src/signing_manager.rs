@@ -3,19 +3,28 @@ use std::{
     fs::File,
     io::{Read, Write},
     path::PathBuf,
+    str::FromStr,
     sync::mpsc::{self},
 };
 
 use joinstr::{
     bip39::{self},
-    miniscript::bitcoin::bip32,
+    miniscript::bitcoin::{
+        bip32::{self, DerivationPath},
+        Psbt,
+    },
 };
 
 use crate::{
     config,
     cpp_joinstr::Network,
-    signer::{HotSigner, JsonSigner, Signer, SignerNotif},
+    signer::{wpkh, HotSigner, JsonSigner, Signer, SignerNotif},
 };
+
+#[derive(Debug, Clone)]
+pub enum Error {
+    ParsePsbt,
+}
 
 /// A manager for handling hot signers and their notifications.
 #[derive(Debug)]
@@ -120,8 +129,61 @@ impl SigningManager {
     /// - `network`: The network for which the hot signer is created.
     /// - `mnemonic`: The mnemonic used to create the hot signer.
     pub fn new_hot_signer_from_mnemonic(&mut self, network: Network, mnemonic: String) {
-        let signer = HotSigner::new_from_mnemonics(network.into(), &mnemonic).unwrap();
+        let mut signer = HotSigner::new_from_mnemonics(network.into(), &mnemonic).unwrap();
+        signer.init(self.sender.clone());
         self.hot_signers.insert(signer.fingerprint(), signer);
-        self.persist();
+    }
+
+    pub fn sign(&self, network: Network, psbt: String) {
+        let psbt = match Psbt::from_str(&psbt) {
+            Ok(p) => p,
+            Err(_) => {
+                if self
+                    .sender
+                    .send(SignerNotif::Manager(Error::ParsePsbt))
+                    .is_err()
+                {
+                    log::error!("SigningManager::sign() fails to send notif")
+                }
+                return;
+            }
+        };
+
+        let signer = self
+            .hot_signers
+            .iter()
+            .next()
+            .expect("at least one signer")
+            .1;
+
+        let n_path = match network {
+            Network::Bitcoin => 0,
+            _ => 1,
+        };
+        let deriv_path = DerivationPath::from_str(&format!("m/84'/{}'/0'", n_path)).unwrap();
+        let xpub = signer.xpub(&deriv_path);
+        let descriptor = wpkh(xpub);
+
+        signer.sign(psbt, descriptor);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bip32::Fingerprint;
+
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_manager_hot_signer() {
+        let mut manager = SigningManager::default();
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string();
+        manager.new_hot_signer_from_mnemonic(Network::Regtest, mnemonic);
+        if let SignerNotif::Info(fg, _info) = manager.poll().unwrap() {
+            assert_eq!(fg, Fingerprint::from_str("73c5da0a").unwrap());
+        } else {
+            panic!("expect info");
+        }
     }
 }

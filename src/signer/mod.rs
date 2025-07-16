@@ -24,7 +24,7 @@ use joinstr::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{cpp_joinstr::AddrAccount, derivator::Derivator};
+use crate::{cpp_joinstr::AddrAccount, derivator::Derivator, signing_manager};
 
 #[derive(Debug)]
 pub enum SignerNotif {
@@ -34,6 +34,7 @@ pub enum SignerNotif {
     DescriptorRegistered(bip32::Fingerprint, Descriptor<DescriptorPublicKey>, bool),
     Signed(bip32::Fingerprint, Psbt),
     Error(bip32::Fingerprint, Error),
+    Manager(signing_manager::Error),
 }
 
 /// This trait implement features that are available when the signer is connected.

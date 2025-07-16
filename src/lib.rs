@@ -60,6 +60,7 @@ pub mod cpp_joinstr {
 
     #[derive(Debug, Clone)]
     pub enum SignalFlag {
+        SignedTx,
         TxListenerStarted,
         TxListenerStopped,
         TxListenerError,

@@ -32,6 +32,7 @@ use crate::{
     label_store::{LabelKey, LabelStore},
     pool_store::PoolStore,
     result,
+    signing_manager::SigningManager,
     tx_store::TxStore,
     Config, PoolsResult, PsbtResult,
 };
@@ -52,14 +53,16 @@ impl Poll {
 /// Represents a signal that can either contain a value or an error message, emulating a Result type through bindings to C++.
 #[derive(Debug, Default, Clone)]
 pub struct Signal {
-    inner: Option<SignalFlag>,
+    flag: Option<SignalFlag>,
+    payload: Option<String>,
     error: Option<String>,
 }
 impl Signal {
     /// Creates a new `Signal` instance with no inner value or error.
     pub fn new() -> Self {
         Self {
-            inner: None,
+            flag: None,
+            payload: None,
             error: None,
         }
     }
@@ -69,7 +72,7 @@ impl Signal {
     ///
     /// * `value` - The `SignalFlag` to set as the inner value.
     pub fn set(&mut self, value: SignalFlag) {
-        self.inner = Some(value);
+        self.flag = Some(value);
         self.error = None;
     }
     /// Sets an error message for the signal and clears any existing inner value.
@@ -79,7 +82,7 @@ impl Signal {
     /// * `error` - The error message to set.
     pub fn set_error(&mut self, error: String) {
         self.error = Some(error);
-        self.inner = None;
+        self.flag = None;
     }
     /// Unwraps the inner value of the signal, assuming it is present.
     ///
@@ -87,7 +90,10 @@ impl Signal {
     ///
     /// Panics if the inner value is not present.
     pub fn unwrap(&self) -> SignalFlag {
-        self.inner.unwrap()
+        self.flag.unwrap()
+    }
+    pub fn payload(&self) -> String {
+        self.payload.clone().unwrap_or_default()
     }
     /// Returns a boxed version of the inner value of the signal.
     ///
@@ -95,7 +101,7 @@ impl Signal {
     ///
     /// Panics if the inner value is not present.
     pub fn boxed(&self) -> Box<SignalFlag> {
-        Box::new(self.inner.unwrap())
+        Box::new(self.flag.unwrap())
     }
     /// Returns the error message of the signal, if any.
     ///
@@ -111,7 +117,7 @@ impl Signal {
     ///
     /// `true` if the signal is ok, `false` otherwise.
     pub fn is_ok(&self) -> bool {
-        self.inner.is_some() && self.error.is_none()
+        self.flag.is_some() && self.error.is_none()
     }
     /// Checks if the signal is in an error state.
     ///
@@ -120,7 +126,7 @@ impl Signal {
     /// `true` if the signal is in an error state, `false` otherwise.
     pub fn is_err(&self) -> bool {
         let err = matches!(
-            self.inner,
+            self.flag,
             Some(SignalFlag::TxListenerError)
                 | Some(SignalFlag::PoolListenerError)
                 | Some(SignalFlag::AccountError)
@@ -289,6 +295,7 @@ pub struct Account {
     config: Config,
     electrum_stop: Option<Arc<AtomicBool>>,
     nostr_stop: Option<Arc<AtomicBool>>,
+    signing_manager: SigningManager,
 }
 
 impl Drop for Account {
@@ -333,6 +340,8 @@ impl Account {
         )));
         coin_store.lock().expect("poisoned").generate();
         let pool_store = Arc::new(Mutex::new(PoolStore::new()));
+        let mut signing_manager = SigningManager::default();
+        signing_manager.new_hot_signer_from_mnemonic(config.network(), config.mnemonic.to_string());
         let mut account = Account {
             coin_store,
             pool_store,
@@ -344,6 +353,7 @@ impl Account {
             receiver,
             sender,
             config,
+            signing_manager,
         };
         account.start_electrum();
         account.start_nostr();
@@ -1425,7 +1435,7 @@ impl Account {
     ///
     /// A boxed `Poll` instance containing the signal.
     pub fn try_recv(&mut self) -> Box<Poll> {
-        match self.receiver.try_recv() {
+        let poll = match self.receiver.try_recv() {
             Ok(notif) => {
                 if let Notification::Electrum(TxListenerNotif::Stopped) = &notif {
                     self.electrum_stop = None;
@@ -1434,12 +1444,28 @@ impl Account {
                     self.nostr_stop = None;
                     self.pool_listener = None;
                 }
-                Poll::ok(notif.to_signal()).boxed()
+                Some(Poll::ok(notif.to_signal()).boxed())
             }
             Err(e) => match e {
-                mpsc::TryRecvError::Disconnected => Poll::err("Disconnected").boxed(),
-                mpsc::TryRecvError::Empty => Poll::new().boxed(),
+                mpsc::TryRecvError::Disconnected => Some(Poll::err("Disconnected").boxed()),
+                mpsc::TryRecvError::Empty => None,
             },
+        };
+        if let Some(p) = poll {
+            p
+        } else {
+            match self.signing_manager.poll() {
+                Some(sn) => match sn {
+                    crate::signer::SignerNotif::Signed(_, psbt) => {
+                        let mut signal = Signal::new();
+                        signal.set(SignalFlag::SignedTx);
+                        signal.payload = Some(psbt.to_string());
+                        Poll::ok(signal).boxed()
+                    }
+                    sn => Poll::err(&format!("{sn:?}")).boxed(),
+                },
+                None => Poll::new().boxed(),
+            }
         }
     }
 
@@ -1564,6 +1590,10 @@ impl Account {
                 notification.send(Notification::Stopped).unwrap();
             }
         });
+    }
+
+    pub fn sign(&self, psbt: String) {
+        self.signing_manager.sign(self.config.network(), psbt);
     }
 }
 
